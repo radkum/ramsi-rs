@@ -1,0 +1,45 @@
+[package]
+name = "ramsi-com"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+
+
+[dependencies]
+macros = { path = "../macros" }
+shared = { path = "../shared" }
+
+log = "0.4.27"
+env_logger = "0.11.8"
+uuid = "1.16.0"
+winreg = "0.55.0"
+windows-core = "0.61.2"
+windows-result = "0.3.4"
+windows-strings = "0.4.2"
+thiserror = { workspace = true }
+serde = { workspace = true, features = ["derive", "rc"] }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = [ "full" ] }
+
+[dependencies.windows-sys]
+version = "0.59.0"
+features = [
+    "Win32_Foundation",
+    "Win32_System",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Diagnostics",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_Threading",
+]
+
+[dependencies.windows]
+version = "0.61.0"
+features = [
+    "Win32_System_Antimalware",
+    "Win32_System_Com",
+    "Win32_System_WinRT",
+    "Win32_System_LibraryLoader",
+]
