@@ -1,0 +1,38 @@
+pub const DEBUG: bool = false;
+
+#[macro_export]
+macro_rules! dprintln {
+    ($($arg:tt)*) => {
+        {
+            let mut res = std::fmt::format(format_args!($($arg)*));
+
+            // carriage return should be dipslay only on windows
+            #[cfg(windows)]
+            res.push('\r');
+
+            res.push_str("\n\0");
+
+            #[allow(unused_unsafe)]
+            unsafe {
+                windows_sys::Win32::System::Diagnostics::Debug::OutputDebugStringA(res.as_ptr());
+            }
+        }
+
+    }
+}
+
+#[macro_export]
+macro_rules! debug {
+    ($($arg:tt)*) => {
+        if $crate::DEBUG {
+            $crate::dprintln!($($arg)*)
+        }
+    }
+}
+
+#[macro_export]
+macro_rules! error {
+    ($($arg:tt)*) => {
+        $crate::dprintln!($($arg)*)
+    }
+}
