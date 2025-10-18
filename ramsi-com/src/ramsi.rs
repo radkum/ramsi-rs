@@ -29,9 +29,9 @@ unsafe trait IRamsi: IAntimalwareProvider {}
 #[implement(IRamsi, IClassFactory)]
 
 pub struct Ramsi {
-    pub process_info: ProcessInfo,
-    pub request_number: AtomicU32,
-    pub pipe: RefCell<PipeClient>,
+    process_info: ProcessInfo,
+    request_number: AtomicU32,
+    pipe: RefCell<PipeClient>,
 }
 
 impl Ramsi {

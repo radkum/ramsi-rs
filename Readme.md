@@ -1,6 +1,8 @@
 ***ABOUT***
 Ramsi (Rust Amsi) - custom amsi Rust implementation
 
+Needs rust 1.88
+
 ***Installation***
 > regsvr32 ramsi.dll
 
