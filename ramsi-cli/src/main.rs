@@ -1,12 +1,6 @@
 mod com_wrapper;
 mod pipe_server;
 
-use com_wrapper::{ComWrapper, RamsiComWrapper};
-
-use shared::{RamsiMessage, constants::RAMSI_PIPE_NAME};
-use tokio::runtime::Runtime;
-
-use crate::pipe_server::PipeError;
 use std::{
     sync::{
         LazyLock,
@@ -14,7 +8,12 @@ use std::{
     },
     time::Duration,
 };
-use tokio::time::timeout;
+
+use com_wrapper::{ComWrapper, RamsiComWrapper};
+use shared::{RamsiMessage, constants::RAMSI_PIPE_NAME};
+use tokio::{runtime::Runtime, time::timeout};
+
+use crate::pipe_server::PipeError;
 
 const RAMSI_COM_DLL: &str = "ramsi_com.dll";
 

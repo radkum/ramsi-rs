@@ -4,22 +4,22 @@ mod amsi_event;
 mod pipe_client;
 mod ramsi_impl;
 
+use std::{
+    cell::RefCell,
+    sync::{LazyLock, atomic::AtomicU32},
+};
+
 pub use amsi_event::AmsiEvent;
 use amsi_event::ProcessInfo;
 use pipe_client::PipeClient;
-
 use windows::Win32::System::{
     Antimalware::*,
     Com::{IClassFactory, IClassFactory_Impl},
 };
 use windows_core::*;
 
-use std::{
-    cell::RefCell,
-    sync::{LazyLock, atomic::AtomicU32},
-};
-
-//pub(super) static mut CLASS_FACTORY: StaticComObject<Ramsi> = Ramsi {}.into_static();
+//pub(super) static mut CLASS_FACTORY: StaticComObject<Ramsi> = Ramsi
+// {}.into_static();
 pub(super) static mut CLASS_FACTORY: LazyLock<StaticComObject<Ramsi>> =
     LazyLock::new(|| Ramsi::new().into_static());
 

@@ -1,14 +1,13 @@
-use windows_sys::Win32::{
+use anyhow::anyhow;
+use macros::debug;
+use windows::Win32::{
     Foundation::{FARPROC, FreeLibrary, GetLastError, HMODULE},
     System::{
         LibraryLoader::{GetProcAddress, LoadLibraryA},
         Ole::{OleInitialize, OleUninitialize},
     },
 };
-
-use anyhow::anyhow;
-use macros::debug;
-use std::ptr::null_mut;
+use windows_core::PCSTR;
 
 type DynError = Box<dyn std::error::Error>;
 
@@ -36,7 +35,8 @@ impl ComWrapper {
     const DLL_UNREGISTER_SERVER: &str = "DllUnregisterServer";
 
     pub fn new(com_name: &str) -> Result<Self, DynError> {
-        unsafe { OleInitialize(null_mut()) };
+        unsafe { OleInitialize(None)? };
+
         Ok(Self(DllWrapper::new(com_name)?))
     }
 
@@ -65,8 +65,8 @@ struct DllWrapper(HMODULE);
 impl DllWrapper {
     pub fn new(dll_name: &str) -> Result<Self, DynError> {
         let c_dll_name = to_c_str(dll_name);
-        let hmod = unsafe { LoadLibraryA(c_dll_name.as_ptr()) };
-        if hmod.is_null() {
+        let hmod = unsafe { LoadLibraryA(PCSTR::from_raw(c_dll_name.as_ptr())) }?;
+        if hmod.is_invalid() {
             return Err(last_error("Failed to load library"));
         }
         Ok(Self(hmod))
@@ -78,18 +78,20 @@ impl DllWrapper {
 
     pub fn load_fn(&self, proc_name: &str) -> FARPROC {
         let module = self.0;
-        if module.is_null() {
+        if module.is_invalid() {
             None
         } else {
             let vec_proc_name = to_c_str(proc_name);
-            unsafe { GetProcAddress(module, vec_proc_name.as_ptr()) }
+            unsafe { GetProcAddress(module, PCSTR::from_raw(vec_proc_name.as_ptr())) }
         }
     }
 }
 
 impl Drop for DllWrapper {
     fn drop(&mut self) {
-        unsafe { FreeLibrary(self.0) };
+        if let Err(err) = unsafe { FreeLibrary(self.0) } {
+            debug!("Failed to free library: {:?}", err);
+        }
     }
 }
 
@@ -100,5 +102,8 @@ fn to_c_str(s: &str) -> Vec<u8> {
 }
 
 fn last_error(msg: &str) -> DynError {
-    anyhow!("{msg}. LastError: {}", unsafe { GetLastError() }).into()
+    anyhow!("{msg}. LastError: {}", unsafe {
+        GetLastError().to_hresult()
+    })
+    .into()
 }

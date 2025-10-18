@@ -1,8 +1,8 @@
 mod process_info;
 
-pub(crate) use process_info::ProcessInfo;
-
 use std::{fmt, fs};
+
+pub(crate) use process_info::ProcessInfo;
 
 #[derive(Default)]
 pub struct AmsiEvent {
@@ -38,7 +38,10 @@ impl AmsiEvent {
             info_file_name,
             format!(
                 "exe_file_name: {:?}\r\napp_name: {}\r\ncontent_name: {}\r\nsession: {}",
-                self.process_info.file_name(), self.app_name, self.content_name, self.session
+                self.process_info.file_name(),
+                self.app_name,
+                self.content_name,
+                self.session
             ),
         )?;
         fs::write(dump_file_name, self.content.as_slice())?;

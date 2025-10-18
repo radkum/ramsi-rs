@@ -1,6 +1,6 @@
-use std::env::current_exe;
-use std::process;
-use windows_sys::Win32::System::Threading::GetCurrentThreadId;
+use std::{env::current_exe, process};
+
+use windows::Win32::System::Threading::GetCurrentThreadId;
 
 #[derive(Default, Clone)]
 pub(crate) struct ProcessInfo {

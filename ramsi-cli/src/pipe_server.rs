@@ -1,14 +1,15 @@
-use serde::de::DeserializeOwned;
-use thiserror::Error;
+use std::{ffi::CString, mem::zeroed, time::Duration};
 
+use serde::de::DeserializeOwned;
 use serde_json::from_slice;
-use std::{ffi::CString, mem::zeroed, ptr::null_mut, time::Duration};
+use thiserror::Error;
 use tokio::{
     io::AsyncReadExt,
     net::windows::named_pipe::{NamedPipeServer, ServerOptions},
     time::timeout,
 };
-use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
+use windows::Win32::Security::SECURITY_ATTRIBUTES;
+use windows_core::PCSTR;
 
 #[derive(Error, Debug)]
 pub enum PipeError {
@@ -69,7 +70,7 @@ pub fn create_writer_with_security_attrs(
     pipe_name: &str,
     first: bool,
 ) -> std::io::Result<NamedPipeServer> {
-    use windows_sys::Win32::Security::Authorization::{
+    use windows::Win32::Security::Authorization::{
         ConvertStringSecurityDescriptorToSecurityDescriptorA, SDDL_REVISION_1,
     };
 
@@ -80,11 +81,11 @@ pub fn create_writer_with_security_attrs(
 
     unsafe {
         ConvertStringSecurityDescriptorToSecurityDescriptorA(
-            input.as_ptr() as _,
+            PCSTR::from_raw(input.as_ptr() as *const _),
             SDDL_REVISION_1,
-            &mut attributes.lpSecurityDescriptor,
-            null_mut(),
-        );
+            &mut attributes.lpSecurityDescriptor as *mut _ as _,
+            None,
+        )?;
     }
 
     let res = unsafe {
