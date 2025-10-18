@@ -5,8 +5,7 @@ mod ramsi;
 mod winapi;
 
 use ramsi::{Ramsi, Ramsi_Impl};
-
-use windows_sys::Win32::{Foundation::HMODULE, System::LibraryLoader::DisableThreadLibraryCalls};
+use windows::Win32::{Foundation::HMODULE, System::LibraryLoader::DisableThreadLibraryCalls};
 
 type DWORD = u32;
 type LPVOID = *mut core::ffi::c_void;
@@ -19,10 +18,9 @@ pub const DLL_THREAD_DETACH: u32 = 3u32;
 
 use std::path::Path;
 
+use macros::{debug, dprintln};
 use windows_core::GUID;
 use winreg::{RegKey, enums::*};
-
-use macros::{debug, dprintln};
 
 static mut MODULE_NAME: Option<String> = None;
 
@@ -34,7 +32,9 @@ pub extern "system" fn DllMain(module: HMODULE, reason: DWORD, _: LPVOID) -> boo
 
             unsafe {
                 MODULE_NAME = Some(winapi::get_curr_module_file_name(module));
-                DisableThreadLibraryCalls(module);
+                if let Err(err) = DisableThreadLibraryCalls(module) {
+                    debug!("Failed to disable thread library calls: {:?}", err);
+                }
                 Ramsi_Impl::create();
             }
         },

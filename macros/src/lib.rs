@@ -14,7 +14,7 @@ macro_rules! dprintln {
 
             #[allow(unused_unsafe)]
             unsafe {
-                windows_sys::Win32::System::Diagnostics::Debug::OutputDebugStringA(res.as_ptr());
+                windows::Win32::System::Diagnostics::Debug::OutputDebugStringA(windows_core::PCSTR::from_raw(res.as_ptr()));
             }
         }
 

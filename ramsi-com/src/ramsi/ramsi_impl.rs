@@ -1,17 +1,16 @@
-use std::{ffi::c_void, mem::zeroed};
-
-use super::{AmsiEvent, Ramsi, Ramsi_Impl};
-
-use crate::{debug, dprintln, winapi::E_NOT_SUFFICIENT_BUFFER};
+use std::{
+    ffi::c_void,
+    mem::zeroed,
+    sync::{LazyLock, atomic::Ordering},
+};
 
 use shared::RamsiMessage;
-use std::sync::atomic::Ordering;
 use tokio::runtime::Runtime;
 use windows::Win32::System::Antimalware::*;
-use windows_core::PWSTR;
-use windows_core::Result as WindowsResult;
+use windows_core::{PWSTR, Result as WindowsResult};
 
-use std::sync::LazyLock;
+use super::{AmsiEvent, Ramsi, Ramsi_Impl};
+use crate::{debug, dprintln, winapi::E_NOT_SUFFICIENT_BUFFER};
 
 pub(super) static RUNTIME: LazyLock<Runtime> = LazyLock::new(|| Runtime::new().unwrap());
 
@@ -107,10 +106,7 @@ impl Ramsi_Impl {
 }
 
 impl IAntimalwareProvider_Impl for Ramsi_Impl {
-    fn Scan(
-        &self,
-        stream: windows_core::Ref<'_, IAmsiStream>,
-    ) -> WindowsResult<AMSI_RESULT> {
+    fn Scan(&self, stream: windows_core::Ref<'_, IAmsiStream>) -> WindowsResult<AMSI_RESULT> {
         debug!("Ramsi::Scan");
 
         let amsi_event = if let Some(s) = stream.as_ref() {
