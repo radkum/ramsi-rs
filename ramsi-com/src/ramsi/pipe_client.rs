@@ -66,9 +66,9 @@ impl PipeClient {
         self.pipe.is_some()
     }
 
-    pub fn disconnect(&mut self) {
-        self.pipe = None;
-    }
+    // pub fn disconnect(&mut self) {
+    //     self.pipe = None;
+    // }
 
     pub async fn send<M: Serialize + Clone + std::fmt::Debug>(
         &mut self,

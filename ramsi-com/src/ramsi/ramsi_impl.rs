@@ -8,7 +8,8 @@ use shared::RamsiMessage;
 use std::sync::atomic::Ordering;
 use tokio::runtime::Runtime;
 use windows::Win32::System::Antimalware::*;
-use windows_strings::PWSTR;
+use windows_core::PWSTR;
+use windows_core::Result as WindowsResult;
 
 use std::sync::LazyLock;
 
@@ -109,7 +110,7 @@ impl IAntimalwareProvider_Impl for Ramsi_Impl {
     fn Scan(
         &self,
         stream: windows_core::Ref<'_, IAmsiStream>,
-    ) -> windows_result::Result<AMSI_RESULT> {
+    ) -> WindowsResult<AMSI_RESULT> {
         debug!("Ramsi::Scan");
 
         let amsi_event = if let Some(s) = stream.as_ref() {
@@ -122,14 +123,14 @@ impl IAntimalwareProvider_Impl for Ramsi_Impl {
             let request_num = self.request_number.load(Ordering::Acquire) + 1;
             self.request_number.store(request_num, Ordering::Release);
 
-            AmsiEvent {
+            AmsiEvent::new(
                 process_info,
                 app_name,
                 content_name,
                 content,
                 session,
-                request_number: request_num,
-            }
+                request_num,
+            )
         } else {
             Default::default()
         };
@@ -151,7 +152,7 @@ impl IAntimalwareProvider_Impl for Ramsi_Impl {
             let res = self
                 .pipe
                 .borrow_mut()
-                .send(RamsiMessage::new(&amsi_event.content_name.as_str()))
+                .send(RamsiMessage::new(&amsi_event.content_name()))
                 .await;
 
             if let Err(e) = res {
@@ -166,7 +167,7 @@ impl IAntimalwareProvider_Impl for Ramsi_Impl {
         debug!("Ramsi::CloseSession");
     }
 
-    fn DisplayName(&self) -> windows_result::Result<PWSTR> {
+    fn DisplayName(&self) -> WindowsResult<PWSTR> {
         debug!("Ramsi::DisplayName");
         let amsi = Ramsi::DISPLAY_NAME.as_ptr();
         Ok(PWSTR(amsi as *mut u16))

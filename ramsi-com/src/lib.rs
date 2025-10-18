@@ -27,7 +27,7 @@ use macros::{debug, dprintln};
 static mut MODULE_NAME: Option<String> = None;
 
 #[unsafe(no_mangle)]
-pub extern "stdcall" fn DllMain(module: HMODULE, reason: DWORD, _: LPVOID) -> bool {
+pub extern "system" fn DllMain(module: HMODULE, reason: DWORD, _: LPVOID) -> bool {
     match reason {
         DLL_PROCESS_ATTACH => {
             debug!("DLL_PROCESS_ATTACH");
@@ -51,7 +51,7 @@ pub extern "stdcall" fn DllMain(module: HMODULE, reason: DWORD, _: LPVOID) -> bo
 }
 
 #[unsafe(no_mangle)]
-pub extern "stdcall" fn DllGetClassObject(
+pub extern "system" fn DllGetClassObject(
     rclsid: *const GUID,
     riid: *const GUID,
     ppv: *mut *mut core::ffi::c_void,
@@ -68,7 +68,7 @@ pub extern "stdcall" fn DllGetClassObject(
 }
 
 #[unsafe(no_mangle)]
-pub extern "stdcall" fn DllCanUnloadNow() -> HRESULT {
+pub extern "system" fn DllCanUnloadNow() -> HRESULT {
     //terminate
     debug!("DllCanUnloadNow");
     Ramsi_Impl::terminate();
@@ -76,7 +76,7 @@ pub extern "stdcall" fn DllCanUnloadNow() -> HRESULT {
 }
 
 #[unsafe(no_mangle)]
-pub extern "stdcall" fn DllRegisterServer() -> HRESULT {
+pub extern "system" fn DllRegisterServer() -> HRESULT {
     dprintln!("DllRegisterServer");
     if let Err(err) = imp_register_server() {
         debug!("{err:?}");
@@ -131,7 +131,7 @@ fn imp_register_server() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[unsafe(no_mangle)]
-pub extern "stdcall" fn DllUnregisterServer() -> HRESULT {
+pub extern "system" fn DllUnregisterServer() -> HRESULT {
     dprintln!("DllUnregisterServer");
     if let Err(err) = imp_unregister_server() {
         debug!("{err:?}");

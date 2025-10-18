@@ -1,36 +1,18 @@
+mod process_info;
+
+pub(crate) use process_info::ProcessInfo;
+
 use std::{fmt, fs};
-
-#[derive(Default, Clone)]
-pub struct ProcessInfo {
-    pub pid: u32,
-    pub tid: u32,
-    pub process_file_name: String,
-}
-
-impl ProcessInfo {
-    pub fn current() -> Self {
-        let pid = std::process::id();
-        let tid = unsafe { windows_sys::Win32::System::Threading::GetCurrentThreadId() as u32 };
-        let curr_path = std::env::current_exe().unwrap_or_default();
-        let process_file_name = curr_path.to_string_lossy().to_string();
-
-        Self {
-            pid,
-            tid,
-            process_file_name,
-        }
-    }
-}
 
 #[derive(Default)]
 pub struct AmsiEvent {
-    pub process_info: ProcessInfo,
-    pub app_name: String, // name, version, or GUID string of the calling application,
-    pub content_name: String, // filename, URL, unique script ID, or similar of the content
-    pub content: Vec<u8>, // content if it's already loaded to memory
-    pub session: u64,     // session is used to associate different scan calls,
+    process_info: ProcessInfo,
+    app_name: String, // name, version, or GUID string of the calling application,
+    content_name: String, // filename, URL, unique script ID, or similar of the content
+    content: Vec<u8>, // content if it's already loaded to memory
+    session: u64,     // session is used to associate different scan calls,
     // such as if the contents to be scanned belong to the sample original script
-    pub request_number: u32, // number of call from one session
+    request_number: u32, // number of call from one session
 }
 
 impl AmsiEvent {
@@ -43,8 +25,8 @@ impl AmsiEvent {
         let file_name = format!(
             "{}\\{}_{}_{}_{}",
             dir,
-            self.process_info.pid,
-            self.process_info.tid,
+            self.process_info.pid(),
+            self.process_info.tid(),
             self.request_number,
             self.content_name.replace("\\", "_").replace(":", "_")
         );
@@ -55,8 +37,8 @@ impl AmsiEvent {
         fs::write(
             info_file_name,
             format!(
-                "exe_file_name: {}\r\napp_name: {}\r\ncontent_name: {}\r\nsession: {}",
-                self.process_info.process_file_name, self.app_name, self.content_name, self.session
+                "exe_file_name: {:?}\r\napp_name: {}\r\ncontent_name: {}\r\nsession: {}",
+                self.process_info.file_name(), self.app_name, self.content_name, self.session
             ),
         )?;
         fs::write(dump_file_name, self.content.as_slice())?;
@@ -66,6 +48,28 @@ impl AmsiEvent {
         )?;
 
         Ok(())
+    }
+
+    pub fn content_name(&self) -> String {
+        self.content_name.clone()
+    }
+
+    pub fn new(
+        process_info: ProcessInfo,
+        app_name: String,
+        content_name: String,
+        content: Vec<u8>,
+        session: u64,
+        request_number: u32,
+    ) -> Self {
+        Self {
+            process_info,
+            app_name,
+            content_name,
+            content,
+            session,
+            request_number,
+        }
     }
 }
 
