@@ -88,11 +88,9 @@ pub fn create_writer_with_security_attrs(
         )?;
     }
 
-    let res = unsafe {
+    unsafe {
         ServerOptions::new()
             .first_pipe_instance(first)
             .create_with_security_attributes_raw(pipe_name, &mut attributes as *mut _ as _)
-    };
-
-    res
+    }
 }

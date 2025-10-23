@@ -32,8 +32,8 @@ dist            builds application and man pages
 }
 
 fn dist() -> Result<(), DynError> {
-    let _ = fs::remove_dir_all(&dist_dir());
-    fs::create_dir_all(&dist_dir())?;
+    let _ = fs::remove_dir_all(dist_dir());
+    fs::create_dir_all(dist_dir())?;
 
     dist_binary("ramsi-com", "ramsi_com.dll")?;
     dist_binary("ramsi-cli", "ramsi-cli.exe")?;
@@ -45,7 +45,7 @@ fn dist_binary(package: &str, binary: &str) -> Result<(), DynError> {
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
     let status = Command::new(cargo)
         .current_dir(project_root())
-        .args(&["build", "--release", "-p", package])
+        .args(["build", "--release", "-p", package])
         .status()?;
 
     if !status.success() {

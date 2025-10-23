@@ -7,7 +7,7 @@ use std::{
 use shared::RamsiMessage;
 use tokio::runtime::Runtime;
 use windows::Win32::System::Antimalware::*;
-use windows_core::{PWSTR, Result as WindowsResult};
+use windows_core::{PCSTR, PWSTR, Result as WindowsResult};
 
 use super::{AmsiEvent, Ramsi, Ramsi_Impl};
 use crate::{debug, dprintln, winapi::E_NOT_SUFFICIENT_BUFFER};
@@ -23,8 +23,7 @@ impl Ramsi_Impl {
             let mut result: T = zeroed();
 
             let mut size: u32 = 0;
-            let mut vec = Vec::new();
-            vec.resize(size_of::<T>(), 0);
+            let mut vec = vec![0; size_of::<T>()];
 
             if let Err(_err) = s.GetAttribute(attribute, vec.as_mut_slice(), &mut size) {
                 debug!(
@@ -43,55 +42,62 @@ impl Ramsi_Impl {
         }
     }
 
-    pub fn string_from_vec(mut buf: Vec<u8>) -> String {
-        let u16_buffer = unsafe { buf.align_to_mut::<u16>().1 };
-
-        let mut ends_with_null = false;
-        if let Some(c) = u16_buffer.last() {
-            if *c == 0 {
-                ends_with_null = true;
+    pub fn string_from_vec(mut buff: Vec<u8>) -> Result<String, Box<dyn std::error::Error>> {
+        let pwstr = PWSTR::from_raw(buff.as_mut_ptr() as *mut u16);
+        unsafe {
+            match pwstr.to_string() {
+                Ok(s) => Ok(s),
+                Err(e) => {
+                    error!("Failed convert vector to wstring: {}", e);
+                    Ok(PCSTR::from_raw(buff.as_mut_ptr()).to_string()?)
+                },
             }
         }
 
-        let mut res_string = String::from_utf16_lossy(u16_buffer);
-        if ends_with_null {
-            res_string.pop();
-        }
+        // let u16_buffer = unsafe { buf.align_to_mut::<u16>().1 };
 
-        return res_string;
+        // let mut ends_with_null = false;
+        // if let Some(c) = u16_buffer.last() && *c == 0 {
+        //     ends_with_null = true;
+        // }
+
+        // let mut res_string = String::from_utf16_lossy(u16_buffer);
+        // if ends_with_null {
+        //     res_string.pop();
+        // }
+
+        // res_string
     }
 
     fn string_attribute(s: &IAmsiStream, attribute: AMSI_ATTRIBUTE) -> String {
+        Self::impl_string_attribute(s, attribute).unwrap_or_else(|e| {
+            error!("Failed to get string attribute {:?}: {}", attribute, e);
+            "<empty>".to_string()
+        })
+    }
+
+    fn impl_string_attribute(
+        s: &IAmsiStream,
+        attribute: AMSI_ATTRIBUTE,
+    ) -> Result<String, Box<dyn std::error::Error>> {
         let mut alloc_size: u32 = 0;
         let mut buf = Vec::new();
 
         unsafe {
-            if let Err(err) = s.GetAttribute(attribute, buf.as_mut_slice(), &mut alloc_size) {
-                if err.code().0 == E_NOT_SUFFICIENT_BUFFER {
-                    buf.resize(alloc_size as usize, 0);
-
-                    if let Err(err) = s.GetAttribute(attribute, buf.as_mut_slice(), &mut alloc_size)
-                    {
-                        debug!(
-                            "get_string_attribute error: 0x{:08x}, msg: {}",
-                            err.code().0,
-                            err.message()
-                        );
-                        return String::new();
-                    }
-
-                    return Self::string_from_vec(buf);
-                }
+            if let Err(err) = s.GetAttribute(attribute, buf.as_mut_slice(), &mut alloc_size)
+                && err.code().0 == E_NOT_SUFFICIENT_BUFFER
+            {
+                buf.resize(alloc_size as usize, 0);
             }
+            s.GetAttribute(attribute, buf.as_mut_slice(), &mut alloc_size)?;
+            Self::string_from_vec(buf)
         }
-        String::new()
     }
 
     fn get_content(s: &IAmsiStream) -> Vec<u8> {
         let content_size = Self::u64_attribute::<u64>(s, AMSI_ATTRIBUTE_CONTENT_SIZE) as usize;
         let content_ptr = Self::u64_attribute::<*mut c_void>(s, AMSI_ATTRIBUTE_CONTENT_ADDRESS);
-        let mut out_buf = Vec::with_capacity(content_size);
-        out_buf.resize(content_size, 0);
+        let mut out_buf = vec![0; content_size];
 
         unsafe {
             std::ptr::copy_nonoverlapping(
@@ -102,6 +108,22 @@ impl Ramsi_Impl {
         }
 
         out_buf
+    }
+}
+
+impl IAntimalwareProvider2_Impl for Ramsi_Impl {
+    fn Notify(
+        &self,
+        _buffer: *const core::ffi::c_void,
+        length: u32,
+        _contentname: &windows_core::PCWSTR,
+        appname: &windows_core::PCWSTR,
+    ) -> windows_core::Result<AMSI_RESULT> {
+        debug!("Ramsi::Notify: length: {length}, app_name: {}", unsafe {
+            appname.to_string().unwrap_or_default()
+        });
+
+        Ok(AMSI_RESULT_NOT_DETECTED)
     }
 }
 
@@ -136,19 +158,18 @@ impl IAntimalwareProvider_Impl for Ramsi_Impl {
             dprintln!("{e}");
         }
 
-        // if !self.pipe.borrow_mut().active() {
-        //     self.pipe.borrow_mut().connect().await;
-        // }
-
         RUNTIME.block_on(async {
-            if !self.pipe.borrow().active() {
-                self.pipe.borrow_mut().connect().await;
+            if !self.pipe_client.borrow().active()
+                && let Err(err) = self.pipe_client.borrow_mut().connect()
+            {
+                error!("{err}");
+                return;
             }
 
             let res = self
-                .pipe
+                .pipe_client
                 .borrow_mut()
-                .send(RamsiMessage::new(&amsi_event.content_name()))
+                .send(RamsiMessage::new(&amsi_event.to_string()))
                 .await;
 
             if let Err(e) = res {
@@ -159,8 +180,8 @@ impl IAntimalwareProvider_Impl for Ramsi_Impl {
         Ok(AMSI_RESULT_NOT_DETECTED)
     }
 
-    fn CloseSession(&self, _: u64) {
-        debug!("Ramsi::CloseSession");
+    fn CloseSession(&self, id: u64) {
+        debug!("Ramsi::CloseSession: {}", id);
     }
 
     fn DisplayName(&self) -> WindowsResult<PWSTR> {

@@ -11,7 +11,6 @@ crate-type = ["cdylib"]
 macros = { path = "../macros" }
 shared = { path = "../shared" }
 
-uuid = "1.16.0"
 winreg = "0.55.0"
 windows-core = { workspace = true }
 thiserror = { workspace = true }

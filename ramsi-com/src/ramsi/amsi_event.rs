@@ -1,6 +1,6 @@
 mod process_info;
 
-use std::{fmt, fs};
+use std::{fmt, fs, path::PathBuf};
 
 pub(crate) use process_info::ProcessInfo;
 
@@ -47,14 +47,10 @@ impl AmsiEvent {
         fs::write(dump_file_name, self.content.as_slice())?;
         fs::write(
             script_file_name,
-            super::Ramsi_Impl::string_from_vec(self.content.clone()),
+            super::Ramsi_Impl::string_from_vec(self.content.clone())?,
         )?;
 
         Ok(())
-    }
-
-    pub fn content_name(&self) -> String {
-        self.content_name.clone()
     }
 
     pub fn new(
@@ -78,10 +74,39 @@ impl AmsiEvent {
 
 impl fmt::Display for AmsiEvent {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        let content_name = if self.content_name.is_empty() {
+            "<empty>".to_string()
+        } else {
+            let path_content_name = PathBuf::from(&self.content_name);
+            if path_content_name.is_file() {
+                path_content_name
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string()
+            } else {
+                self.content_name.clone()
+            }
+        };
+
+        const POWERSHELL_APP_PREFIX: &str = "powershell_";
+        const POWERSHELL_APP: &str = "PowerShell";
+        let app_name = if self.app_name.is_empty() {
+            "<empty>".to_string()
+        } else if self
+            .app_name
+            .to_ascii_lowercase()
+            .starts_with(POWERSHELL_APP_PREFIX)
+        {
+            POWERSHELL_APP.to_string()
+        } else {
+            self.app_name.clone()
+        };
+
         write!(
             fmt,
             "AmsiEvent {{ request_number: {}, content_name: {}, app_name: {} }}",
-            self.request_number, self.content_name, self.app_name,
+            self.request_number, content_name, app_name,
         )
     }
 }

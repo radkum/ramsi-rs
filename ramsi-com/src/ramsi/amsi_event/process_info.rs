@@ -12,7 +12,7 @@ pub(crate) struct ProcessInfo {
 impl ProcessInfo {
     pub fn current() -> Self {
         let pid = process::id();
-        let tid = unsafe { GetCurrentThreadId() as u32 };
+        let tid = unsafe { GetCurrentThreadId() };
 
         let file_name = current_exe().ok().map(|p| p.to_string_lossy().to_string());
         Self {

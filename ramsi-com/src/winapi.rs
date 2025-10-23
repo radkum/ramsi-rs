@@ -1,7 +1,7 @@
 use windows::Win32::{Foundation::HMODULE, System::LibraryLoader::GetModuleFileNameA};
 
 #[allow(overflowing_literals)]
-pub const E_NOT_SUFFICIENT_BUFFER: i32 = 0x8007007a as i32;
+pub const E_NOT_SUFFICIENT_BUFFER: i32 = 0x8007007a_i32;
 
 pub fn get_curr_module_file_name(module: HMODULE) -> String {
     let mut filename_buf = [0u8; 255];
