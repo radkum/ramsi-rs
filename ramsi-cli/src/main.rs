@@ -10,7 +10,7 @@ use std::{
 };
 
 use com_wrapper::{ComWrapper, RamsiComWrapper};
-use shared::{RamsiMessage, constants::RAMSI_PIPE_NAME};
+use shared::{FfiString, PipeName, RamsiMessage, constants::RAMSI_PIPE_SUFFIX};
 use tokio::{runtime::Runtime, time::timeout};
 
 use crate::pipe_server::PipeError;
@@ -25,39 +25,61 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
-        log::error!("missing args");
+        println!("No arguments provided.");
+        print_help();
         return Ok(());
     }
 
-    log::debug!("main start");
+    let ramsi_path = if args.len() > 2 {
+        args[2].as_str()
+    } else {
+        RAMSI_COM_DLL
+    };
+
+    let pipe_suffix = if args.len() > 3 {
+        args[3].as_str()
+    } else {
+        RAMSI_PIPE_SUFFIX
+    };
+    let pipe_name = PipeName::from_suffix(pipe_suffix);
+    pipe_name.verify()?;
+    let pipe_suffix_ffi = FfiString::new(pipe_suffix);
+
+    log::trace!("Main start");
 
     let command = args[1].as_str();
     match command {
         "-r" | "--register" => {
-            let com_wrapper = ComWrapper::new(RAMSI_COM_DLL)?;
-            com_wrapper.register()?;
+            let com_wrapper = ComWrapper::new(ramsi_path)?;
+            com_wrapper.register(pipe_suffix_ffi)?;
         },
         "-u" | "--unregister" => {
-            let com_wrapper = ComWrapper::new(RAMSI_COM_DLL)?;
+            let com_wrapper = ComWrapper::new(ramsi_path)?;
             com_wrapper.unregister()?;
         },
         "-a" | "--all" => {
-            let _ramsi_wrapper = RamsiComWrapper::new(RAMSI_COM_DLL)?;
+            let _ramsi_wrapper = RamsiComWrapper::new(ramsi_path, pipe_suffix_ffi)?;
             let rt = Runtime::new()?;
-            rt.block_on(trace_amsi_events())?;
+            rt.block_on(trace_amsi_events(pipe_name.as_str()))?;
         },
         "-t" | "--trace" => {
             let rt = Runtime::new()?;
-            rt.block_on(trace_amsi_events())?;
+            rt.block_on(trace_amsi_events(pipe_name.as_str()))?;
         },
-        _ => {},
+        "-h" | "--help" => {
+            print_help();
+        },
+        _ => {
+            println!("Unknown command: {}", command);
+            print_help();
+        },
     }
 
-    log::debug!("main finish");
+    log::debug!("Main finished");
     Ok(())
 }
 
-async fn trace_amsi_events() -> Result<(), Box<dyn std::error::Error>> {
+async fn trace_amsi_events(pipe_name: &str) -> Result<(), Box<dyn std::error::Error>> {
     tokio::spawn(async move {
         ctrlc::set_handler(move || {
             println!("received Ctrl+C!");
@@ -66,7 +88,7 @@ async fn trace_amsi_events() -> Result<(), Box<dyn std::error::Error>> {
         .expect("Error setting Ctrl-C handler");
     });
 
-    let mut server = pipe_server::create_first_server(RAMSI_PIPE_NAME)?;
+    let mut server = pipe_server::create_first_server(pipe_name)?;
 
     loop {
         {
@@ -77,7 +99,7 @@ async fn trace_amsi_events() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // Wait for a client to connect.
-        if let Err(_) = timeout(Duration::from_millis(1000), server.connect()).await {
+        if let Err(_err) = timeout(Duration::from_millis(1000), server.connect()).await {
             //timeout
             continue;
         }
@@ -89,7 +111,7 @@ async fn trace_amsi_events() -> Result<(), Box<dyn std::error::Error>> {
         // isn't closed (after it's done in the task) before a new one is
         // available. Otherwise the client might error with
         // `io::ErrorKind::NotFound`.
-        server = pipe_server::create_server(RAMSI_PIPE_NAME)?;
+        server = pipe_server::create_server(pipe_name)?;
 
         let _client = tokio::spawn(async move {
             loop {
@@ -102,7 +124,7 @@ async fn trace_amsi_events() -> Result<(), Box<dyn std::error::Error>> {
 
                 match pipe_server::message::<RamsiMessage>(&mut connected_client, 1000).await {
                     Ok(input_message) => {
-                        println!("{:?}", input_message);
+                        println!("{}", input_message);
                     },
                     Err(err) => match err {
                         PipeError::Timeout => { /* to noisy */ },
@@ -115,4 +137,13 @@ async fn trace_amsi_events() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+fn print_help() {
+    println!("Usage: ramsi-cli [OPTION]");
+    println!("Options:");
+    println!("  -r, --register       Register the COM component");
+    println!("  -u, --unregister     Unregister the COM component");
+    println!("  -a, --all            Register the COM component and trace AMSI events");
+    println!("  -t, --trace          Trace AMSI events");
 }

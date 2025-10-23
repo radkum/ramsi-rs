@@ -1,1 +1,1 @@
-pub const RAMSI_PIPE_NAME: &str = r"\\.\pipe\ramsi";
+pub const RAMSI_PIPE_SUFFIX: &str = r"ramsi";

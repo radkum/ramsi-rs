@@ -1,4 +1,3 @@
-use macros::error;
 use serde::Serialize;
 use serde_json::to_vec;
 use thiserror::Error;
@@ -10,6 +9,9 @@ use tokio::{
 
 #[derive(Error, Debug)]
 pub enum PipeClientError {
+    #[error("Failed to connect pipe \"{1}\": {0}")]
+    FailedToConnect(std::io::Error, String),
+
     #[error("Io error: {0}")]
     IoError(std::io::Error),
 
@@ -19,6 +21,7 @@ pub enum PipeClientError {
     #[error("Pipe not active")]
     NotActive,
 }
+pub type PipeClientResult<T> = Result<T, PipeClientError>;
 
 impl From<std::io::Error> for PipeClientError {
     fn from(err: std::io::Error) -> Self {
@@ -49,26 +52,27 @@ impl PipeClient {
         }
     }
 
-    pub async fn connect(&mut self) -> bool {
-        match ClientOptions::new().open(&self.pipe_name) {
-            Ok(pipe) => {
-                self.pipe = Some(pipe);
-                true
-            },
-            Err(err) => {
-                error!("Desktop-ui: Connecting pipe failed: {err}");
-                false
-            },
-        }
+    pub fn connect(&mut self) -> PipeClientResult<()> {
+        self.pipe = Some(
+            ClientOptions::new()
+                .open(&self.pipe_name)
+                .map_err(|err| PipeClientError::FailedToConnect(err, self.pipe_name.clone()))?,
+        );
+        Ok(())
+        // match ClientOptions::new().open(&self.pipe_name) {
+        //     Ok(pipe) => {
+        //         self.pipe = Some(pipe);
+        //         Ok(())
+        //     },
+        //     Err(err) => {
+        //         Err(PipeClientError::FailedToConnect(err,
+        // self.pipe_name.clone()))     },
+        // }
     }
 
     pub fn active(&self) -> bool {
         self.pipe.is_some()
     }
-
-    // pub fn disconnect(&mut self) {
-    //     self.pipe = None;
-    // }
 
     pub async fn send<M: Serialize + Clone + std::fmt::Debug>(
         &mut self,
