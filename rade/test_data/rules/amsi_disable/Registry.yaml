@@ -1,0 +1,26 @@
+id: 5e31f5ec-ef18-445b-bddd-846c064ca709
+name: Amsi Disable Registry
+description: Detects the removal of AMSI via registry modifications.
+categories: ["amsi", "bypass", "registry", "powershell"]
+mitre_tactic: Defense Evasion
+mitre_tactic_id: TA0005
+mitre_id: T1070
+example: '"[Ref].Assembly.GetType("System.Management.Automation.AmsiUtils").GetField(''amsiInitFailed'',''NonPublic,Static'').SetValue($null,$true)"'
+condition: !And
+- !IContains
+  - !Field Content
+  - !Lit Microsoft\\AMSI\\Providers
+- !Or
+  - !IContains
+    - !Field Tokens
+    - !Lit Remove-Item
+  - !IContains
+    - !Field Tokens
+    - !Lit rm
+  - !And
+    - !IContains
+      - !Field Tokens
+      - !Lit reg.exe
+    - !IContains
+      - !Field Tokens
+      - !Lit delete

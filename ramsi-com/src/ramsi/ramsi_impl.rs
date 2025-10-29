@@ -94,7 +94,7 @@ impl Ramsi_Impl {
         }
     }
 
-    fn get_content(s: &IAmsiStream) -> Vec<u8> {
+    fn get_content(s: &IAmsiStream) -> String {
         let content_size = Self::u64_attribute::<u64>(s, AMSI_ATTRIBUTE_CONTENT_SIZE) as usize;
         let content_ptr = Self::u64_attribute::<*mut c_void>(s, AMSI_ATTRIBUTE_CONTENT_ADDRESS);
         let mut out_buf = vec![0; content_size];
@@ -107,7 +107,10 @@ impl Ramsi_Impl {
             );
         }
 
-        out_buf
+        Self::string_from_vec(out_buf).unwrap_or_else(|e| {
+            error!("Failed to get content: {}", e);
+            "<empty>".to_string()
+        })
     }
 }
 

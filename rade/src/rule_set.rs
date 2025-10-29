@@ -1,70 +1,134 @@
-mod source;
+mod error;
+mod rule;
+
+use core::mem::size_of;
+
+pub use error::*;
+pub use rule::*;
 use serde::{Deserialize, Serialize};
-type GUID = uuid::Uuid;
+use sha2::{Digest, Sha256};
 
-#[derive(Debug, Deserialize, Serialize)]
-pub enum Field {
-    Content,
+use crate::utils::{BIN_CONFIG, Sha256Buff};
+
+#[derive(Deserialize, Serialize, Default)]
+pub struct RuleSetHeader {
+    magic: u32,
+    checksum: Sha256Buff,
+    //elem_count: u32,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-pub enum Val {
-    Str(String),
-    Num(i64),
-    Field(Field),
-}
+impl RuleSetHeader {
+    const HEADER_SIZE: usize = size_of::<Self>();
+    const MAGIC: u32 = 0x45444152; // "RADE"
 
-#[derive(Debug, Deserialize, Serialize)]
-pub enum Operand {
-    And(Vec<Operand>),
-    AIContains(Val, Val),
-}
-
-type Condition = Operand;
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct Rule {
-    id: GUID,
-    name: Option<String>,
-    description: Option<String>,
-    mitre_tactic: Option<String>,
-    mitre_tactic_id: Option<String>,
-    mitre_id: Option<String>,
-    example: Option<String>,
-    condition: Option<Condition>,
-}
-
-impl Rule {
-    pub fn from_str() -> Result<Self, serde_yaml_bw::Error> {
-        let yaml_str = source::RULE;
-        serde_yaml_bw::from_str::<Rule>(yaml_str)
-    }
-
-    pub fn new(
-        guid: GUID,
-        name: &str,
-        description: &str,
-        mitre_tactic: &str,
-        mitre_tactic_id: &str,
-        mitre_id: &str,
-        example: &str,
-        condition: Condition,
-    ) -> Self {
-        Self {
-            id: guid,
-            name: Some(name.to_string()),
-            description: Some(description.to_string()),
-            mitre_tactic: Some(mitre_tactic.to_string()),
-            mitre_tactic_id: Some(mitre_tactic_id.to_string()),
-            mitre_id: Some(mitre_id.to_string()),
-            example: Some(example.to_string()),
-            condition: Some(condition),
+    pub fn verify_magic(&self) -> Result<(), RuleSetError> {
+        if Self::MAGIC != self.magic {
+            return Err(RuleSetError::IncorrectMagicError {
+                current: String::from_utf8_lossy(&self.magic.to_le_bytes()).into(),
+            });
         }
+        Ok(())
+    }
+
+    pub fn verify_sha256(&self, calculated_checksum: Sha256Buff) -> Result<(), RuleSetError> {
+        if calculated_checksum.as_slice() != self.checksum.as_slice() {
+            return Err(RuleSetError::IncorrectChecksumError {
+                current: String::from_utf8_lossy(&self.checksum.as_slice()).into(),
+                expected: hex::encode(calculated_checksum.as_slice()),
+            });
+        }
+        Ok(())
     }
 }
 
+pub type Rules = Vec<Rule>;
+#[derive(Deserialize, Serialize)]
 pub struct RuleSet {
-    id: String,
-    ttype: String,
-    rules: Vec<Rule>,
+    header: RuleSetHeader,
+    rules: Rules,
+}
+
+impl RuleSet {
+    pub fn new(header: RuleSetHeader, rules: Rules) -> Self {
+        Self { header, rules }
+    }
+
+    #[cfg(feature = "std")]
+    pub fn serialize<W: std::io::Write>(&self, out: &mut W) -> Result<(), RuleSetError> {
+        let data = self.serialize_to_bytes()?;
+        out.write_all(&data)?;
+        Ok(())
+    }
+
+    pub(crate) fn serialize_to_bytes(&self) -> Result<Vec<u8>, RuleSetError> {
+        let mut data = Vec::new();
+
+        let rules_data = bincode::serde::encode_to_vec(&self.rules, BIN_CONFIG)?;
+
+        let header = RuleSetHeader {
+            magic: RuleSetHeader::MAGIC,
+            checksum: Self::calc_checksum(&rules_data),
+        };
+        let header_data = bincode::serde::encode_to_vec(header, BIN_CONFIG)?;
+
+        data.extend(header_data);
+        data.extend(rules_data);
+
+        Ok(data)
+    }
+
+    #[cfg(feature = "std")]
+    pub fn deserialize<R: std::io::Read>(mut io_reader: R) -> Result<Self, RuleSetError> {
+        let mut data = vec![];
+        let _size = io_reader.read_to_end(&mut data)?;
+        Self::deserialize_from_bytes(&mut data)
+    }
+
+    pub(crate) fn deserialize_from_bytes(data: &mut Vec<u8>) -> Result<Self, RuleSetError> {
+        if data.len() < RuleSetHeader::HEADER_SIZE {
+            return Err(RuleSetError::IncorrectFileSizeError {
+                size: data.len() as u64,
+            });
+        }
+
+        let header_data = data
+            .drain(..RuleSetHeader::HEADER_SIZE)
+            .collect::<Vec<u8>>();
+        let header: RuleSetHeader = bincode::serde::decode_from_slice(&header_data, BIN_CONFIG)?.0;
+
+        header.verify_magic()?;
+        header.verify_sha256(Self::calc_checksum(data))?;
+
+        let rules: Rules = bincode::serde::decode_from_slice(&data, BIN_CONFIG)?.0;
+
+        Ok(Self::new(header, rules))
+    }
+
+    fn calc_checksum(data: &[u8]) -> Sha256Buff {
+        let mut hasher = Sha256::new();
+        hasher.update(data);
+        Sha256Buff::from_vec(hasher.finalize().to_vec())
+    }
+
+    pub fn retain_rules(self) -> Rules {
+        self.rules
+    }
+
+    pub fn rules(&self) -> &Rules {
+        &self.rules
+    }
+}
+
+impl From<Rules> for RuleSet {
+    fn from(rules: Rules) -> Self {
+        let header = RuleSetHeader::default();
+        Self::new(header, rules)
+    }
+}
+
+impl From<Rule> for RuleSet {
+    fn from(rule: Rule) -> Self {
+        let rules = vec![rule];
+        Self::from(rules)
+    }
 }

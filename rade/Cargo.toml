@@ -12,6 +12,15 @@ readme = "README.md"
 path = "src/lib.rs"
 
 [dependencies]
+bincode = { version = "2.0.0-rc.3", features = ["serde", "alloc"]}
+hex = "~0"
+log = "~0"
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_yaml_bw = "=2.0.0"
+sha2 = "0.10"
 uuid = { version = "1.18.1", features = ["serde"] }
+thiserror-no-std = "2.0"
+
+[features]
+default = ["std"]
+std = []
