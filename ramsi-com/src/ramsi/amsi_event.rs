@@ -9,7 +9,7 @@ pub struct AmsiEvent {
     process_info: ProcessInfo,
     app_name: String, // name, version, or GUID string of the calling application,
     content_name: String, // filename, URL, unique script ID, or similar of the content
-    content: Vec<u8>, // content if it's already loaded to memory
+    content: String,  // content if it's already loaded to memory
     session: u64,     // session is used to associate different scan calls,
     // such as if the contents to be scanned belong to the sample original script
     request_number: u32, // number of call from one session
@@ -44,11 +44,8 @@ impl AmsiEvent {
                 self.session
             ),
         )?;
-        fs::write(dump_file_name, self.content.as_slice())?;
-        fs::write(
-            script_file_name,
-            super::Ramsi_Impl::string_from_vec(self.content.clone())?,
-        )?;
+        fs::write(dump_file_name, &self.content)?;
+        fs::write(script_file_name, &self.content)?;
 
         Ok(())
     }
@@ -57,7 +54,7 @@ impl AmsiEvent {
         process_info: ProcessInfo,
         app_name: String,
         content_name: String,
-        content: Vec<u8>,
+        content: String,
         session: u64,
         request_number: u32,
     ) -> Self {

@@ -1,0 +1,16 @@
+- pid: 1111
+  tid: 2111
+  file_name: C:\path\to\exe
+  app_name: powershell
+  content_name: script1.ps1
+  content: 'Write-Output "easdf"'
+  session: 4321
+  request_number: 1
+- pid: 1222
+  tid: 2222
+  file_name: C:\path\to\exe
+  app_name: powershell
+  content_name: script2.ps1
+  content: '"[Ref].Assembly.GetType("System.Management.Automation.AmsiUtils").GetField(''amsiInitFailed'',''NonPublic,Static'').SetValue($null,$true)"'
+  session: 4321
+  request_number: 2
