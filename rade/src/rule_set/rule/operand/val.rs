@@ -9,14 +9,24 @@ pub use int_list::*;
 pub use str::*;
 pub use str_list::*;
 
-use crate::{CompFlag, Event};
+use crate::{Event, InsensitiveFlag};
 
 pub trait Eq {
-    fn eq<'a>(&'a self, _elem: &Val, _event: &'a Event, _comp_flag: &Option<CompFlag>) -> bool {
+    fn eq<'a>(
+        &'a self,
+        _elem: &Val,
+        _event: &'a Event,
+        _comp_flag: &Option<InsensitiveFlag>,
+    ) -> bool {
         false
     }
 
-    fn neq<'a>(&'a self, _elem: &Val, _event: &'a Event, _comp_flag: &Option<CompFlag>) -> bool {
+    fn neq<'a>(
+        &'a self,
+        _elem: &Val,
+        _event: &'a Event,
+        _comp_flag: &Option<InsensitiveFlag>,
+    ) -> bool {
         false
     }
 }
@@ -26,7 +36,7 @@ pub trait Contains {
         &'a self,
         _elem: &Val,
         _event: &'a Event,
-        _comp_flag: &Option<CompFlag>,
+        _comp_flag: &Option<InsensitiveFlag>,
     ) -> bool {
         false
     }
@@ -39,13 +49,17 @@ trait Cast {
     fn as_u64_list<'a>(&'a self, _event: &'a Event) -> Option<&'a Vec<u64>> {
         None
     }
-    fn as_str<'a>(&'a self, _event: &'a Event, _comp_flag: &Option<CompFlag>) -> Option<&'a str> {
+    fn as_str<'a>(
+        &'a self,
+        _event: &'a Event,
+        _comp_flag: &Option<InsensitiveFlag>,
+    ) -> Option<&'a str> {
         None
     }
     fn as_str_list<'a>(
         &'a self,
         _event: &'a Event,
-        _comp_flag: &Option<CompFlag>,
+        _comp_flag: &Option<InsensitiveFlag>,
     ) -> Option<Vec<&'a str>> {
         None
     }
@@ -60,19 +74,18 @@ pub enum Val {
 }
 
 impl Contains for Val {
-    fn contains<'a>(&self, elem: &Val, event: &Event, flag: &Option<CompFlag>) -> bool {
+    fn contains<'a>(&self, elem: &Val, event: &Event, flag: &Option<InsensitiveFlag>) -> bool {
         match self {
             Val::Int(val) => val.contains(elem, event, flag),
             Val::IntList(val) => val.contains(elem, event, flag),
             Val::Str(val) => val.contains(elem, event, flag),
             Val::StrList(val) => val.contains(elem, event, flag),
-            _ => false,
         }
     }
 }
 
 impl Eq for Val {
-    fn eq<'a>(&'a self, elem: &Val, event: &'a Event, comp_flag: &Option<CompFlag>) -> bool {
+    fn eq<'a>(&'a self, elem: &Val, event: &'a Event, comp_flag: &Option<InsensitiveFlag>) -> bool {
         match self {
             Val::Int(int) => int.eq(elem, event, comp_flag),
             //Val::IntList(int_list) => int_list.eq(elem, event, comp_flag),
@@ -82,7 +95,12 @@ impl Eq for Val {
         }
     }
 
-    fn neq<'a>(&'a self, elem: &Val, event: &'a Event, comp_flag: &Option<CompFlag>) -> bool {
+    fn neq<'a>(
+        &'a self,
+        elem: &Val,
+        event: &'a Event,
+        comp_flag: &Option<InsensitiveFlag>,
+    ) -> bool {
         match self {
             Val::Int(int) => int.neq(elem, event, comp_flag),
             //Val::IntList(int_list) => int_list.neq(elem, event, comp_flag),
@@ -102,7 +120,11 @@ impl Cast for Val {
         }
     }
 
-    fn as_str<'a>(&'a self, event: &'a Event, comp_flag: &Option<CompFlag>) -> Option<&'a str> {
+    fn as_str<'a>(
+        &'a self,
+        event: &'a Event,
+        comp_flag: &Option<InsensitiveFlag>,
+    ) -> Option<&'a str> {
         match self {
             Val::Str(str) => str.as_str(event, comp_flag),
             Val::StrList(str) => str.as_str(event, comp_flag),
@@ -121,7 +143,7 @@ impl Cast for Val {
     fn as_str_list<'a>(
         &'a self,
         event: &'a Event,
-        comp_flag: &Option<CompFlag>,
+        comp_flag: &Option<InsensitiveFlag>,
     ) -> Option<Vec<&'a str>> {
         match self {
             Val::Str(s) => s.as_str_list(event, comp_flag),

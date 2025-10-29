@@ -1,10 +1,12 @@
 mod error;
 mod rule;
+mod rules;
 
 use core::mem::size_of;
 
 pub use error::*;
 pub use rule::*;
+pub use rules::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -33,7 +35,7 @@ impl RuleSetHeader {
     pub fn verify_sha256(&self, calculated_checksum: Sha256Buff) -> Result<(), RuleSetError> {
         if calculated_checksum.as_slice() != self.checksum.as_slice() {
             return Err(RuleSetError::IncorrectChecksumError {
-                current: String::from_utf8_lossy(&self.checksum.as_slice()).into(),
+                current: String::from_utf8_lossy(self.checksum.as_slice()).into(),
                 expected: hex::encode(calculated_checksum.as_slice()),
             });
         }
@@ -41,7 +43,6 @@ impl RuleSetHeader {
     }
 }
 
-pub type Rules = Vec<Rule>;
 #[derive(Deserialize, Serialize)]
 pub struct RuleSet {
     header: RuleSetHeader,
@@ -99,8 +100,9 @@ impl RuleSet {
         header.verify_magic()?;
         header.verify_sha256(Self::calc_checksum(data))?;
 
-        let rules: Rules = bincode::serde::decode_from_slice(&data, BIN_CONFIG)?.0;
-
+        println!("before deserializing rules");
+        let rules: Rules = bincode::serde::decode_from_slice(data, BIN_CONFIG)?.0;
+        println!("AFTER deserializing rules");
         Ok(Self::new(header, rules))
     }
 
@@ -129,6 +131,6 @@ impl From<Rules> for RuleSet {
 impl From<Rule> for RuleSet {
     fn from(rule: Rule) -> Self {
         let rules = vec![rule];
-        Self::from(rules)
+        Self::from(Rules::from(rules))
     }
 }

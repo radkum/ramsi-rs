@@ -5,22 +5,27 @@ categories: ["amsi", "bypass", "registry", "powershell"]
 mitre_tactic: Defense Evasion
 mitre_tactic_id: TA0005
 mitre_id: T1070
-example: '"[Ref].Assembly.GetType("System.Management.Automation.AmsiUtils").GetField(''amsiInitFailed'',''NonPublic,Static'').SetValue($null,$true)"'
+example: reg delete "HKLM\SOFTWARE\Microsoft\AMSI\Providers" /f
 condition: !And
-- !IContains
+- !Contains
   - !Field Content
-  - !Lit Microsoft\\AMSI\\Providers
+  - !Str Microsoft\\AMSI\\Providers
+  - CaseInsensitive
 - !Or
-  - !IContains
-    - !Field Tokens
-    - !Lit Remove-Item
-  - !IContains
-    - !Field Tokens
-    - !Lit rm
+  - !Contains
+    - !Field ContentTokens
+    - !Str Remove-Item
+    - CaseInsensitive
+  - !Contains
+    - !Field ContentTokens
+    - !Str rm
+    - CaseInsensitive
   - !And
-    - !IContains
-      - !Field Tokens
-      - !Lit reg.exe
-    - !IContains
-      - !Field Tokens
-      - !Lit delete
+    - !Contains
+      - !Field ContentTokens
+      - !Str reg
+      - CaseInsensitive
+    - !Contains
+      - !Field ContentTokens
+      - !Str delete
+      - CaseInsensitive

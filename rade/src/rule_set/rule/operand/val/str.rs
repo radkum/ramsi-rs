@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{Cast, CompFlag, Eq, Val};
+use super::{Cast, Eq, InsensitiveFlag, Val};
 use crate::{Event, FatString};
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
@@ -17,32 +17,33 @@ pub enum Str {
 }
 
 impl Str {
-    pub fn contains<'a>(&self, elem: &Val, event: &'a Event, comp_flag: &Option<CompFlag>) -> bool {
+    pub fn contains(&self, elem: &Val, event: &Event, comp_flag: &Option<InsensitiveFlag>) -> bool {
         let (Some(s1), Some(s2)) = (self.as_str(event, comp_flag), elem.as_str(event, comp_flag))
         else {
             return false;
         };
-        s1.contains(&s2)
+        //log::trace!("Checking if '{}' contains '{}'", s1, s2);
+        s1.contains(s2)
     }
 
-    pub fn starts_with<'a>(
+    pub fn starts_with(
         &self,
         elem: &Str,
-        event: &'a Event,
-        comp_flag: &Option<CompFlag>,
+        event: &Event,
+        comp_flag: &Option<InsensitiveFlag>,
     ) -> bool {
         let (Some(s1), Some(s2)) = (self.as_str(event, comp_flag), elem.as_str(event, comp_flag))
         else {
             return false;
         };
-        s1.starts_with(&s2)
+        s1.starts_with(s2)
     }
 
-    pub fn ends_with<'a>(
+    pub fn ends_with(
         &self,
         elem: &Str,
-        event: &'a Event,
-        comp_flag: &Option<CompFlag>,
+        event: &Event,
+        comp_flag: &Option<InsensitiveFlag>,
     ) -> bool {
         let (Some(s1), Some(s2)) = (self.as_str(event, comp_flag), elem.as_str(event, comp_flag))
         else {
@@ -53,7 +54,11 @@ impl Str {
 }
 
 impl Cast for Str {
-    fn as_str<'a>(&'a self, event: &'a Event, comp_flag: &Option<CompFlag>) -> Option<&'a str> {
+    fn as_str<'a>(
+        &'a self,
+        event: &'a Event,
+        comp_flag: &Option<InsensitiveFlag>,
+    ) -> Option<&'a str> {
         let fat_string = match self {
             Self::Lit(s) => Some(s),
             Self::Field(field) => match field {
@@ -72,7 +77,7 @@ impl Cast for Str {
 }
 
 impl Eq for Str {
-    fn eq<'a>(&'a self, elem: &Val, event: &'a Event, comp_flag: &Option<CompFlag>) -> bool {
+    fn eq<'a>(&'a self, elem: &Val, event: &'a Event, comp_flag: &Option<InsensitiveFlag>) -> bool {
         let (Some(s1), Some(s2)) = (self.as_str(event, comp_flag), elem.as_str(event, comp_flag))
         else {
             return false;
@@ -80,7 +85,12 @@ impl Eq for Str {
         s1 == s2
     }
 
-    fn neq<'a>(&'a self, elem: &Val, event: &'a Event, comp_flag: &Option<CompFlag>) -> bool {
+    fn neq<'a>(
+        &'a self,
+        elem: &Val,
+        event: &'a Event,
+        comp_flag: &Option<InsensitiveFlag>,
+    ) -> bool {
         let (Some(s1), Some(s2)) = (self.as_str(event, comp_flag), elem.as_str(event, comp_flag))
         else {
             return false;

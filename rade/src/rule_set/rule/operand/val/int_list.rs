@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{Cast, CompFlag, Eq, Val};
+use super::{Cast, InsensitiveFlag, Val};
 use crate::{Event, rule_set::rule::operand::val::Contains};
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
@@ -10,7 +10,7 @@ impl IntList {
     pub fn new(list: Vec<u64>) -> Self {
         Self(list)
     }
-    pub fn eq<'a>(&self, elem: &Val, event: &'a Event) -> bool {
+    pub fn eq(&self, elem: &Val, event: &Event) -> bool {
         let (Some(i1), Some(i2)) = (self.as_u64_list(event), elem.as_u64_list(event)) else {
             return false;
         };
@@ -40,7 +40,7 @@ impl Cast for IntList {
     }
 }
 impl Contains for IntList {
-    fn contains<'a>(&self, elem: &Val, event: &'a Event, _: &Option<CompFlag>) -> bool {
+    fn contains(&self, elem: &Val, event: &Event, _: &Option<InsensitiveFlag>) -> bool {
         let Some(elem) = elem.as_u64(event) else {
             return false;
         };

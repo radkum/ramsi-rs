@@ -29,14 +29,20 @@ impl<'de> serde::Deserialize<'de> for Val {
         D: serde::Deserializer<'de>,
     {
         let val_helper = ValSerialized::deserialize(deserializer)?;
-        Ok(match val_helper {
+        Ok(Val::from(val_helper))
+    }
+}
+
+impl From<ValSerialized> for Val {
+    fn from(val_ser: ValSerialized) -> Self {
+        match val_ser {
             ValSerialized::Int(i) => Val::Int(Int::Lit(i)),
-            ValSerialized::IntList(il) => Val::IntList(IntList(il)),
+            ValSerialized::IntList(v) => Val::IntList(IntList(v)),
             ValSerialized::Str(s) => Val::Str(Str::Lit(s.into())),
-            ValSerialized::StrList(sl) => {
-                Val::StrList(StrList::Lit(sl.into_iter().map(|s| s.into()).collect()))
+            ValSerialized::StrList(v) => {
+                Val::StrList(StrList::Lit(v.into_iter().map(|s| s.into()).collect()))
             },
-            ValSerialized::Field(f) => match f {
+            ValSerialized::Field(field_ser) => match field_ser {
                 FieldSerialized::Pid => Val::Int(Int::Field(FieldInt::Pid)),
                 FieldSerialized::Tid => Val::Int(Int::Field(FieldInt::Tid)),
                 FieldSerialized::Session => Val::Int(Int::Field(FieldInt::Session)),
@@ -48,10 +54,9 @@ impl<'de> serde::Deserialize<'de> for Val {
                     Val::StrList(StrList::Field(FieldStrList::ContentTokens))
                 },
             },
-        })
+        }
     }
 }
-
 impl serde::Serialize for Val {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

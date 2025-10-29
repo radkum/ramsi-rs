@@ -10,7 +10,8 @@ condition: !And
 - !Contains
   - !Field Content
   - !Str '[Ref].Assembly.GetType(''System.Management.Automation.AmsiUtils'')'
+  - CaseAndApostrophe
 - !Contains
   - !Field Content
   - !Str .GetField('amsiInitFailed'
-  - Both
+  - CaseAndApostrophe
