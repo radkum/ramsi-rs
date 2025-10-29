@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{Cast, CompFlag, Contains, Val};
+use super::{Cast, Contains, InsensitiveFlag, Val};
 use crate::{Event, FatString};
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
@@ -18,7 +18,7 @@ impl Cast for StrList {
     fn as_str<'a>(
         &'a self,
         event: &'a crate::Event,
-        comp_flag: &Option<CompFlag>,
+        comp_flag: &Option<InsensitiveFlag>,
     ) -> Option<&'a str> {
         let list = match self {
             Self::Lit(s) => Some(s),
@@ -27,9 +27,10 @@ impl Cast for StrList {
             },
         };
 
-        let Some(list) = list else {
+        let list = list?;
+        if list.is_empty() {
             return None;
-        };
+        }
 
         Some(list[0].choose(comp_flag))
     }
@@ -37,7 +38,7 @@ impl Cast for StrList {
     fn as_str_list<'a>(
         &'a self,
         event: &'a Event,
-        comp_flag: &Option<CompFlag>,
+        comp_flag: &Option<InsensitiveFlag>,
     ) -> Option<Vec<&'a str>> {
         let list = match self {
             Self::Lit(s) => Some(s),
@@ -45,9 +46,7 @@ impl Cast for StrList {
                 FieldStrList::ContentTokens => event.content_tokens.as_ref(),
             },
         };
-        let Some(list) = list else {
-            return None;
-        };
+        let list = list?;
         if list.is_empty() {
             return None;
         }
@@ -57,11 +56,11 @@ impl Cast for StrList {
 }
 
 impl Contains for StrList {
-    fn contains<'a>(
+    fn contains(
         &self,
         elem: &Val,
-        event: &'a crate::Event,
-        comp_flag: &Option<CompFlag>,
+        event: &crate::Event,
+        comp_flag: &Option<InsensitiveFlag>,
     ) -> bool {
         let Some(str_list) = self.as_str_list(event, comp_flag) else {
             return false;

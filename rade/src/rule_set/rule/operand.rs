@@ -3,40 +3,41 @@ mod val;
 use serde::{Deserialize, Serialize};
 pub use val::*;
 
-use crate::{CompFlag, Event};
+use crate::{Event, InsensitiveFlag};
+
 #[derive(Debug, Deserialize, Serialize)]
 pub enum Operand {
     And(Vec<Operand>),
     Or(Vec<Operand>),
-    Eq(Val, Val, Option<CompFlag>),
-    Neq(Val, Val, Option<CompFlag>),
-    StartsWith(Str, Str, Option<CompFlag>),
-    EndsWith(Str, Str, Option<CompFlag>),
-    Contains(
-        Val,
-        Val,
-        #[serde(skip_serializing_if = "Option::is_none", default)] Option<CompFlag>,
-    ),
+    Eq(Val, Val, #[serde(default)] Option<InsensitiveFlag>),
+    Neq(Val, Val, #[serde(default)] Option<InsensitiveFlag>),
+    StartsWith(Str, Str, #[serde(default)] Option<InsensitiveFlag>),
+    EndsWith(Str, Str, #[serde(default)] Option<InsensitiveFlag>),
+    Contains(Val, Val, #[serde(default)] Option<InsensitiveFlag>),
 }
 
 impl Operand {
     pub fn evaluate(&self, event: &Event) -> bool {
         match self {
             Operand::Or(operands) => {
+                let mut result = false;
                 for operand in operands {
                     if operand.evaluate(event) {
-                        return true;
+                        result = true;
+                        break;
                     }
                 }
-                false
+                result
             },
             Operand::And(operands) => {
+                let mut result = true;
                 for operand in operands {
                     if !operand.evaluate(event) {
-                        return false;
+                        result = false;
+                        break;
                     }
                 }
-                true
+                result
             },
             Operand::Eq(val1, val2, flag) => val1.eq(val2, event, flag),
             Operand::Neq(val1, val2, flag) => val1.neq(val2, event, flag),

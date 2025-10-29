@@ -1,18 +1,24 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub enum CompFlag {
-    CaseInsensitive,
-    ApostropheInsensitive,
-    Both,
+pub enum InsensitiveFlag {
+    Case,
+    Apostrophe,
+    CaseAndApostrophe,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct FatString {
     pub plain: String,
     pub case_insensitive: String,
     pub apostrophe_insensitive: String,
     pub ca_insensitive: String,
+}
+
+impl alloc::fmt::Debug for FatString {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "FatString({})", self.plain)
+    }
 }
 
 impl<'de> Deserialize<'de> for FatString {
@@ -49,7 +55,7 @@ impl From<&String> for FatString {
 impl From<String> for FatString {
     fn from(s: String) -> Self {
         let case_insensitive = s.to_lowercase();
-        let apostrophe_insensitive = s.replace("'", "");
+        let apostrophe_insensitive = s.replace("'", "\"");
         let ca_insensitive = apostrophe_insensitive.to_lowercase();
         Self {
             plain: s,
@@ -61,12 +67,12 @@ impl From<String> for FatString {
 }
 
 impl FatString {
-    pub fn choose<'a>(&'a self, comp_flag: &Option<CompFlag>) -> &'a str {
+    pub fn choose<'a>(&'a self, comp_flag: &Option<InsensitiveFlag>) -> &'a str {
         if let Some(comp_flag) = comp_flag {
             match comp_flag {
-                CompFlag::Both => self.ca_insensitive.as_ref(),
-                CompFlag::CaseInsensitive => self.case_insensitive.as_ref(),
-                CompFlag::ApostropheInsensitive => self.apostrophe_insensitive.as_ref(),
+                InsensitiveFlag::CaseAndApostrophe => self.ca_insensitive.as_ref(),
+                InsensitiveFlag::Case => self.case_insensitive.as_ref(),
+                InsensitiveFlag::Apostrophe => self.apostrophe_insensitive.as_ref(),
             }
         } else {
             self.plain.as_ref()

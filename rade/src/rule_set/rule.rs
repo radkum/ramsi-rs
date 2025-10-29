@@ -1,5 +1,7 @@
 mod operand;
 
+use std::str::FromStr;
+
 //use operand::Operand;
 pub use operand::*;
 use serde::{Deserialize, Serialize};
@@ -21,6 +23,13 @@ pub struct Rule {
     condition: Option<Condition>,
 }
 
+impl FromStr for Rule {
+    type Err = anyhow::Error;
+
+    fn from_str(src: &str) -> Result<Self, Self::Err> {
+        Ok(serde_yaml_bw::from_str::<Rule>(src)?)
+    }
+}
 impl Rule {
     pub fn new(
         guid: GUID,
@@ -42,10 +51,6 @@ impl Rule {
             example: Some(example.to_string()),
             condition: Some(condition),
         }
-    }
-
-    pub fn from_str(src: &str) -> RuleResult<Self> {
-        Ok(serde_yaml_bw::from_str::<Rule>(src)?)
     }
 
     #[cfg(feature = "std")]
@@ -70,8 +75,8 @@ impl Rule {
 mod tests {
     use std::str::FromStr;
 
-    use super::{operand::*, *};
-    use crate::CompFlag;
+    use super::*;
+    use crate::InsensitiveFlag;
 
     #[test]
     fn test_rule_from_str() {
@@ -84,12 +89,14 @@ mitre_tactic_id: TA0005
 mitre_id: T1562.001
 example: '"[Ref].Assembly.GetType("System.Management.Automation.AmsiUtils").GetField(''amsiInitFailed'',''NonPublic,Static'').SetValue($null,$true)"'
 condition: !And
-- !AIContains
+- !Contains
   - !Field Content
-  - !Lit '[Ref].Assembly.GetType(''System.Management.Automation.AmsiUtils'')'
-- !AIContains
+  - !Str '[Ref].Assembly.GetType(''System.Management.Automation.AmsiUtils'')'
+  - CaseAndApostrophe
+- !Contains
   - !Field Content
-  - !Lit .GetField('amsiInitFailed'
+  - !Str .GetField('amsiInitFailed'
+  - CaseAndApostrophe
 "#;
         let rule_from_str = Rule::from_str(rule_yaml).unwrap();
         let rule = Rule::new(
@@ -106,12 +113,12 @@ condition: !And
                     Val::Str(Str::Lit(
                         "[Ref].Assembly.GetType('System.Management.Automation.AmsiUtils')".into(),
                     )),
-                    Some(CompFlag::Both),
+                    Some(InsensitiveFlag::CaseAndApostrophe),
                 ),
                 Operand::Contains(
                     Val::Str(Str::Field(FieldStr::Content)),
                     Val::Str(Str::Lit(".GetField('amsiInitFailed'".into())),
-                    Some(CompFlag::Both),
+                    Some(InsensitiveFlag::CaseAndApostrophe),
                 ),
             ]),
         );

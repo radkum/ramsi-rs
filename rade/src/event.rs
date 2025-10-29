@@ -1,16 +1,58 @@
 mod serializer;
 
+use std::fs::read_to_string;
+
+use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
 
-use crate::FatString;
+use crate::{FatString, Result};
 
-type Result<T> = core::result::Result<T, Box<dyn core::error::Error>>;
-
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Events(Vec<Event>);
 impl Events {
-    pub fn iter(&self) -> core::slice::Iter<Event> {
+    pub fn iter(&self) -> core::slice::Iter<'_, Event> {
         self.0.iter()
+    }
+
+    fn add_event(&mut self, event: Event) {
+        self.0.push(event);
+    }
+
+    #[cfg(feature = "std")]
+    pub fn from_dir(path: &std::path::Path) -> Result<Self> {
+        fn imp_from_dir(path: &std::path::Path, events: &mut Events) -> Result<()> {
+            if path.is_file() {
+                let content = read_to_string(path)
+                    .map_err(|err| anyhow!("Failed to read file {}: {:?}", path.display(), err))?;
+                let event = serde_yaml_bw::from_str::<Event>(&content)?;
+                events.add_event(event);
+            } else if path.is_dir() {
+                let events_dir = std::fs::read_dir(path)?;
+                for event_dir_entry in events_dir {
+                    let Ok(event) = event_dir_entry else {
+                        log::warn!("Failed to read dir entry from path",);
+                        continue;
+                    };
+
+                    if let Err(err) = imp_from_dir(&event.path(), events) {
+                        println!(
+                            "Failed to read event from path: {:?}, error: {:?}",
+                            event.path(),
+                            err
+                        );
+                    }
+                }
+            } else {
+                Err(anyhow::anyhow!(
+                    "Path {} is neither file nor directory",
+                    path.display()
+                ))?;
+            }
+            Ok(())
+        }
+        let mut events = Events::default();
+        imp_from_dir(path, &mut events)?;
+        Ok(events)
     }
 }
 

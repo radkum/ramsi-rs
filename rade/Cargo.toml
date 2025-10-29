@@ -12,6 +12,7 @@ readme = "README.md"
 path = "src/lib.rs"
 
 [dependencies]
+anyhow = "1.0"
 bincode = { version = "2.0.0-rc.3", features = ["serde", "alloc"]}
 hex = "~0"
 log = "~0"

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{Cast, CompFlag, Contains, Eq, Val};
+use super::{Cast, Contains, Eq, InsensitiveFlag, Val};
 use crate::Event;
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
@@ -34,20 +34,20 @@ impl Cast for Int {
 }
 
 impl Eq for Int {
-    fn eq<'a>(&self, elem: &Val, event: &'a Event, _: &Option<CompFlag>) -> bool {
+    fn eq(&self, elem: &Val, event: &Event, _: &Option<InsensitiveFlag>) -> bool {
         let (Some(i1), Some(i2)) = (self.as_u64(event), elem.as_u64(event)) else {
             return false;
         };
         i1 == i2
     }
 
-    fn neq<'a>(&self, elem: &Val, event: &'a Event, _: &Option<CompFlag>) -> bool {
+    fn neq(&self, elem: &Val, event: &Event, _: &Option<InsensitiveFlag>) -> bool {
         !self.eq(elem, event, &None)
     }
 }
 
 impl Contains for Int {
-    fn contains<'a>(&self, elem: &Val, event: &'a Event, _: &Option<CompFlag>) -> bool {
+    fn contains(&self, elem: &Val, event: &Event, _: &Option<InsensitiveFlag>) -> bool {
         self.eq(elem, event, &None)
     }
 }

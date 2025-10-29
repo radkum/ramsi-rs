@@ -3,11 +3,13 @@ use alloc::{string::String, vec::Vec};
 use core::fmt;
 
 use bincode::config::{Configuration, Fixint, LittleEndian, NoLimit};
-pub use fat_string::{CompFlag, FatString};
+pub use fat_string::{FatString, InsensitiveFlag};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use thiserror_no_std::Error;
 
+pub type Result<T> = core::result::Result<T, Box<dyn core::error::Error>>;
+pub type ShaResult<T> = core::result::Result<T, ShaError>;
 pub(crate) const BIN_CONFIG: Configuration<LittleEndian, Fixint, NoLimit> =
     bincode::config::legacy();
 
@@ -51,7 +53,7 @@ impl Sha256Buff {
         checksum_buf
     }
 
-    pub fn from_sha_string(s: &str) -> Result<Self, ShaError> {
+    pub fn from_sha_string(s: &str) -> ShaResult<Self> {
         let mut sha = Sha256Buff::default();
         let v = hex::decode(s)?;
 
