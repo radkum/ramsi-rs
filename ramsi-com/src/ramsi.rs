@@ -1,15 +1,15 @@
 #![allow(non_camel_case_types)]
 
-mod amsi_event;
-mod pipe_client;
-mod ramsi_impl;
+mod antimalware;
+mod attribute;
+mod report;
+mod scan;
 use core::result::Result;
 use std::{cell::RefCell, path::Path, sync::atomic::AtomicU32};
 
-pub use amsi_event::AmsiEvent;
-use amsi_event::ProcessInfo;
-use macros::{debug, error};
-use pipe_client::PipeClient;
+use fern::Dispatch;
+use log::{LevelFilter, debug, error};
+use report::PipeClient;
 use shared::{PipeName, constants::RAMSI_PIPE_SUFFIX};
 use windows::Win32::System::{
     Antimalware::*,
@@ -17,9 +17,9 @@ use windows::Win32::System::{
 };
 use windows_core::*;
 use winreg::{RegKey, enums::*};
-// pub(super) static mut CLASS_FACTORY:
-// std::sync::LazyLock<StaticComObject<Ramsi>> =     std::sync::LazyLock::new(||
-// Ramsi::new().into_static());
+
+use crate::utils::ProcessInfo;
+
 pub(super) static mut CLASS_FACTORY: Option<StaticComObject<Ramsi>> = None;
 
 #[interface("b8614e83-84ac-45fb-82a8-21711aaf07f2")]
@@ -46,6 +46,12 @@ impl Ramsi {
     }
 
     pub fn new() -> Self {
+        let process_info = ProcessInfo::current();
+
+        if let Err(err) = Self::init_logging(LevelFilter::Info, &process_info) {
+            error!("Failed to initialize logging: {err}");
+        }
+
         //read pipe name from registry
         let pipe_name = match Self::get_pipe_name() {
             Ok(name) => name,
@@ -54,11 +60,62 @@ impl Ramsi {
                 format!(r"\\.\pipe\{}", RAMSI_PIPE_SUFFIX)
             },
         };
+
         Self {
-            process_info: ProcessInfo::current(),
+            process_info,
             request_number: AtomicU32::new(0),
             pipe_client: RefCell::new(PipeClient::new(&pipe_name)),
         }
+    }
+
+    fn init_logging(
+        log_level: LevelFilter,
+        process_info: &ProcessInfo,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let base = format!("amsi-{}-{}", process_info.pid(), process_info.tid());
+        let log_dir = "C:\\ramsi";
+
+        let mut logger = Dispatch::new().format(|out, message, record| {
+            out.finish(format_args!(
+                "[{}][{}][{}::{}] {}",
+                chrono::Utc::now().format("%Y-%m-%d %H:%M:%S %Z"),
+                record.level().short(),
+                record.target(),
+                record.line().unwrap_or(0),
+                message,
+            ))
+        });
+
+        logger = logger.chain(
+            Dispatch::new()
+                .level(LevelFilter::Off)
+                .level_for("ramsi-com", log_level)
+                .chain(fern::DateBased::new(
+                    log_dir,
+                    format!("/{base}-%Y-%m-%d.log"),
+                )),
+        );
+
+        logger.apply()?;
+
+        Ok(())
+    }
+}
+
+pub trait ShortName {
+    fn short(&self) -> String;
+}
+
+impl ShortName for log::Level {
+    fn short(&self) -> String {
+        match self {
+            Self::Info => "INF",
+            Self::Warn => "WRN",
+            Self::Error => "ERR",
+            Self::Debug => "DBG",
+            Self::Trace => "VER",
+        }
+        .to_owned()
     }
 }
 

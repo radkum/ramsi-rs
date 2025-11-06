@@ -1,15 +1,18 @@
 #![allow(non_snake_case)]
 #![allow(static_mut_refs)]
 
+mod amsi_utils;
 mod ramsi;
 mod winapi;
-
+use amsi_utils as utils;
 use ramsi::{Ramsi, Ramsi_Impl};
 use shared::{PipeName, constants::RAMSI_PIPE_SUFFIX, ffi_string::FfiString};
 use windows::Win32::{Foundation::HMODULE, System::LibraryLoader::DisableThreadLibraryCalls};
 type Dword = u32;
 type Lpvoid = *mut core::ffi::c_void;
 type HResult = i32;
+
+pub use shared::{dprintln, win_log};
 
 pub const DLL_PROCESS_ATTACH: u32 = 1u32;
 pub const DLL_PROCESS_DETACH: u32 = 0u32;
@@ -18,7 +21,6 @@ pub const DLL_THREAD_DETACH: u32 = 3u32;
 
 use std::path::Path;
 
-use macros::{debug, dprintln};
 use windows_core::GUID;
 use winreg::{RegKey, enums::*};
 
@@ -28,24 +30,23 @@ static mut MODULE_NAME: Option<String> = None;
 pub extern "system" fn DllMain(module: HMODULE, reason: Dword, _: Lpvoid) -> bool {
     match reason {
         DLL_PROCESS_ATTACH => {
-            debug!("DLL_PROCESS_ATTACH");
+            win_log!("DLL_PROCESS_ATTACH");
 
             unsafe {
                 MODULE_NAME = Some(winapi::get_curr_module_file_name(module));
                 if let Err(err) = DisableThreadLibraryCalls(module) {
-                    debug!("Failed to disable thread library calls: {:?}", err);
+                    win_log!("Failed to disable thread library calls: {:?}", err);
                 }
                 Ramsi_Impl::create();
             }
         },
         DLL_PROCESS_DETACH => {
-            debug!("DLL_PROCESS_DETACH");
+            win_log!("DLL_PROCESS_DETACH");
             let result = Ramsi_Impl::terminate();
-            debug!("Ramsi_Impl::terminate result: {}", result);
+            win_log!("Ramsi_Impl::terminate result: {}", result);
         },
-        DLL_THREAD_ATTACH => debug!("DLL_THREAD_ATTACH"),
-        DLL_THREAD_DETACH => debug!("DLL_THREAD_DETACH"),
-        _ => debug!("unknows reason"),
+        DLL_THREAD_ATTACH => win_log!("DLL_THREAD_ATTACH"),
+        _ => win_log!("unknown reason"),
     }
 
     true
@@ -57,10 +58,10 @@ pub extern "system" fn DllGetClassObject(
     riid: *const GUID,
     ppv: *mut *mut core::ffi::c_void,
 ) -> HResult {
-    debug!("DllGetClassObject");
+    win_log!("DllGetClassObject");
     let res = Ramsi_Impl::get_class_object(rclsid, riid, ppv);
     if res.is_err() {
-        debug!(
+        win_log!(
             "DllGetClassObject: res: {}, {}",
             res.message(),
             display_pointers(rclsid, riid, ppv)
@@ -73,9 +74,9 @@ pub extern "system" fn DllGetClassObject(
 #[unsafe(no_mangle)]
 pub extern "system" fn DllCanUnloadNow() -> HResult {
     //terminate
-    debug!("DllCanUnloadNow");
+    win_log!("DllCanUnloadNow");
     let result = Ramsi_Impl::terminate();
-    debug!("Ramsi_Impl::terminate result: {}", result);
+    win_log!("Ramsi_Impl::terminate result: {}", result);
     0
 }
 
@@ -84,7 +85,7 @@ pub extern "system" fn DllRegisterServerWithPipe(pipe_suffix: FfiString) -> HRes
     //set pipe name to registry
     dprintln!("DllRegisterServerWithPipe");
     if let Err(err) = imp_register_server(pipe_suffix.into_string()) {
-        debug!("{err:?}");
+        win_log!("{err:?}");
         return -1;
     }
     0
@@ -94,7 +95,7 @@ pub extern "system" fn DllRegisterServerWithPipe(pipe_suffix: FfiString) -> HRes
 pub extern "system" fn DllRegisterServer() -> HResult {
     dprintln!("DllRegisterServer");
     if let Err(err) = imp_register_server(None) {
-        debug!("DllRegisterServer error: {err:?}");
+        win_log!("DllRegisterServer error: {err:?}");
         return -1;
     }
     0
@@ -109,25 +110,25 @@ fn imp_register_server(pipe_suffix: Option<String>) -> Result<(), Box<dyn std::e
 
     //set CLSID
     let uuid_path_string = format!("Software\\Classes\\CLSID\\{}", Ramsi::IID());
-    debug!("uuid_path {}", uuid_path_string);
+    win_log!("uuid_path {}", uuid_path_string);
 
     let uuid_path = Path::new(uuid_path_string.as_str());
     let (key, disp) = hkcu.create_subkey(uuid_path)?;
     match disp {
-        REG_CREATED_NEW_KEY => debug!("A new key has been created"),
-        REG_OPENED_EXISTING_KEY => debug!("An existing key has been opened"),
+        REG_CREATED_NEW_KEY => win_log!("A new key has been created"),
+        REG_OPENED_EXISTING_KEY => win_log!("An existing key has been opened"),
     }
     key.set_value("", &Ramsi::NAME)?;
     key.set_value("pipe", &pipe_name.suffix())?;
 
     // set InProcServer32
     let inproc_path = uuid_path.join("InProcServer32");
-    debug!("inproc_path {}", inproc_path.display());
+    win_log!("inproc_path {}", inproc_path.display());
 
     let (key, disp) = hkcu.create_subkey(&inproc_path)?;
     match disp {
-        REG_CREATED_NEW_KEY => debug!("A new key has been created"),
-        REG_OPENED_EXISTING_KEY => debug!("An existing key has been opened"),
+        REG_CREATED_NEW_KEY => win_log!("A new key has been created"),
+        REG_OPENED_EXISTING_KEY => win_log!("An existing key has been opened"),
     }
 
     let module_name = unsafe { MODULE_NAME.clone() };
@@ -137,13 +138,13 @@ fn imp_register_server(pipe_suffix: Option<String>) -> Result<(), Box<dyn std::e
     //set amsi provider
     let amsi_provider_path_string =
         format!("Software\\Microsoft\\AMSI\\Providers\\{}", Ramsi::IID());
-    debug!("uuid_path {}", uuid_path_string);
+    win_log!("uuid_path {}", uuid_path_string);
 
     let amsi_provider_path = Path::new(amsi_provider_path_string.as_str());
     let (key, disp) = hkcu.create_subkey(amsi_provider_path)?;
     match disp {
-        REG_CREATED_NEW_KEY => debug!("A new key has been created"),
-        REG_OPENED_EXISTING_KEY => debug!("An existing key has been opened"),
+        REG_CREATED_NEW_KEY => win_log!("A new key has been created"),
+        REG_OPENED_EXISTING_KEY => win_log!("An existing key has been opened"),
     }
     key.set_value("", &Ramsi::NAME)?;
 
@@ -154,14 +155,14 @@ fn imp_register_server(pipe_suffix: Option<String>) -> Result<(), Box<dyn std::e
 pub extern "system" fn DllUnregisterServer() -> HResult {
     dprintln!("DllUnregisterServer");
     if let Err(err) = imp_unregister_server() {
-        debug!("{err:?}");
+        win_log!("{err:?}");
         return -1;
     }
     0
 }
 
 fn imp_unregister_server() -> Result<(), Box<dyn std::error::Error>> {
-    debug!("DllUnregisterServer start");
+    win_log!("DllUnregisterServer start");
     let hkcu = RegKey::predef(HKEY_LOCAL_MACHINE);
 
     // Unregister this CLSID as an anti-malware provider.
@@ -173,7 +174,7 @@ fn imp_unregister_server() -> Result<(), Box<dyn std::error::Error>> {
     let CLSID_path = format!("Software\\Classes\\CLSID\\{}", Ramsi::IID());
     hkcu.delete_subkey_all(CLSID_path)?;
 
-    debug!("DllUnregisterServer end");
+    win_log!("DllUnregisterServer end");
     Ok(())
 }
 
