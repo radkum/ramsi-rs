@@ -59,15 +59,6 @@ impl PipeClient {
                 .map_err(|err| PipeClientError::FailedToConnect(err, self.pipe_name.clone()))?,
         );
         Ok(())
-        // match ClientOptions::new().open(&self.pipe_name) {
-        //     Ok(pipe) => {
-        //         self.pipe = Some(pipe);
-        //         Ok(())
-        //     },
-        //     Err(err) => {
-        //         Err(PipeClientError::FailedToConnect(err,
-        // self.pipe_name.clone()))     },
-        // }
     }
 
     pub fn active(&self) -> bool {

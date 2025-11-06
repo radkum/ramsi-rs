@@ -14,9 +14,15 @@ shared = { path = "../shared" }
 winreg = "0.55.0"
 windows-core = { workspace = true }
 thiserror = { workspace = true }
+ps-parser = "0.2.2"
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = [ "full" ] }
+sha2 = "0.10.9"
+phf = "0.13.1"
+log.workspace = true
+fern = { version = "0.7.1", features = ["date-based"] }
+chrono = "0.4.42"
 
 [dependencies.windows]
 workspace = true

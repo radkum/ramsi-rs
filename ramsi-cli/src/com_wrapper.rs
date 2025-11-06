@@ -1,6 +1,5 @@
 use anyhow::anyhow;
-use macros::debug;
-use shared::FfiString;
+use shared::{FfiString, debug};
 use windows::Win32::{
     Foundation::{FARPROC, FreeLibrary, GetLastError, HMODULE},
     System::{

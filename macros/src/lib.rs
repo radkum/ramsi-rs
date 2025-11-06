@@ -1,38 +1,44 @@
-pub const DEBUG: bool = true;
+use proc_macro::TokenStream;
+use quote::quote;
+use syn::{ItemConst, parse_macro_input};
 
-#[macro_export]
-macro_rules! dprintln {
-    ($($arg:tt)*) => {
-        {
-            let mut res = std::fmt::format(format_args!($($arg)*));
-
-            // carriage return should be dipslay only on windows
-            #[cfg(windows)]
-            res.push('\r');
-
-            res.push_str("\n\0");
-
-            #[allow(unused_unsafe)]
-            unsafe {
-                windows::Win32::System::Diagnostics::Debug::OutputDebugStringA(windows_core::PCSTR::from_raw(res.as_ptr()));
+#[proc_macro]
+pub fn lowercase_const_array(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as ItemConst);
+    let ident = input.ident;
+    let expr = match *input.expr {
+        syn::Expr::Array(arr) => arr,
+        syn::Expr::Reference(ref_expr) => {
+            if let syn::Expr::Array(arr) = *ref_expr.expr {
+                arr
+            } else {
+                panic!("Expected array expression");
             }
-        }
+        },
+        _ => panic!("Expected array expression"),
+    };
 
-    }
-}
+    let lowered: Vec<_> = expr
+        .elems
+        .iter()
+        .map(|elem| {
+            if let syn::Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Str(lit_str),
+                ..
+            }) = elem
+            {
+                let lower = lit_str.value().to_lowercase();
+                quote! { #lower }
+            } else {
+                panic!("Expected string literal");
+            }
+        })
+        .collect();
 
-#[macro_export]
-macro_rules! debug {
-    ($($arg:tt)*) => {
-        if $crate::DEBUG {
-            $crate::dprintln!($($arg)*)
-        }
-    }
-}
+    let n = lowered.len();
+    let expanded = quote! {
+        const #ident: [&'static str; #n] = [#(#lowered),*];
+    };
 
-#[macro_export]
-macro_rules! error {
-    ($($arg:tt)*) => {
-        $crate::dprintln!($($arg)*)
-    }
+    expanded.into()
 }

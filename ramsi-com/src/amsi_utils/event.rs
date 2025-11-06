@@ -5,7 +5,7 @@ use std::{fmt, fs, path::PathBuf};
 pub(crate) use process_info::ProcessInfo;
 
 #[derive(Default)]
-pub struct AmsiEvent {
+pub struct RamsiEvent {
     process_info: ProcessInfo,
     app_name: String, // name, version, or GUID string of the calling application,
     content_name: String, // filename, URL, unique script ID, or similar of the content
@@ -15,7 +15,8 @@ pub struct AmsiEvent {
     request_number: u32, // number of call from one session
 }
 
-impl AmsiEvent {
+impl RamsiEvent {
+    #[allow(dead_code)]
     pub fn dump(&self) -> Result<(), Box<dyn std::error::Error>> {
         let dir = "C:\\ramsi";
         if !fs::exists(dir).unwrap_or_default() {
@@ -37,8 +38,8 @@ impl AmsiEvent {
         fs::write(
             info_file_name,
             format!(
-                "exe_file_name: {:?}\r\napp_name: {}\r\ncontent_name: {}\r\nsession: {}",
-                self.process_info.file_name(),
+                "exe_file_path: {:?}\r\napp_name: {}\r\ncontent_name: {}\r\nsession: {}",
+                self.process_info.file_path(),
                 self.app_name,
                 self.content_name,
                 self.session
@@ -69,7 +70,7 @@ impl AmsiEvent {
     }
 }
 
-impl fmt::Display for AmsiEvent {
+impl fmt::Display for RamsiEvent {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         let content_name = if self.content_name.is_empty() {
             "<empty>".to_string()

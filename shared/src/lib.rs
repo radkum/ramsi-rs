@@ -1,6 +1,6 @@
 pub mod constants;
+pub mod debug_macros;
 pub mod ffi_string;
-
 pub use ffi_string::{FfiString, PipeName};
 use serde::{Deserialize, Serialize};
 
