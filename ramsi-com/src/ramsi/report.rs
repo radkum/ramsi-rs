@@ -32,6 +32,10 @@ impl Ramsi_Impl {
 
         debug!("{}", amsi_event);
 
+        // only for debug purpose
+        #[cfg(debug_assertions)]
+        let _ = amsi_event.dump();
+
         if let Some(runtime) = &*RUNTIME {
             runtime.block_on(async {
                 if !self.pipe_client.borrow().active()

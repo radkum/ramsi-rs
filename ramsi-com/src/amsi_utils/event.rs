@@ -38,8 +38,8 @@ impl RamsiEvent {
         fs::write(
             info_file_name,
             format!(
-                "exe_file_path: {:?}\r\napp_name: {}\r\ncontent_name: {}\r\nsession: {}",
-                self.process_info.file_path(),
+                "cmd_line: '{}'\r\napp_name: {}\r\ncontent_name: {}\r\nsession: {}",
+                self.process_info.cmd_line(),
                 self.app_name,
                 self.content_name,
                 self.session
