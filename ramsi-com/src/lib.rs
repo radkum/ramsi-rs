@@ -4,6 +4,7 @@
 mod amsi_utils;
 mod ramsi;
 mod winapi;
+
 use amsi_utils as utils;
 use ramsi::{Ramsi, Ramsi_Impl};
 use shared::{PipeName, constants::RAMSI_PIPE_SUFFIX, ffi_string::FfiString};
@@ -106,14 +107,14 @@ fn imp_register_server(pipe_suffix: Option<String>) -> Result<(), Box<dyn std::e
     let pipe_name = PipeName::from_suffix(pipe_suffix);
     pipe_name.verify()?;
 
-    let hkcu = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
 
     //set CLSID
     let uuid_path_string = format!("Software\\Classes\\CLSID\\{}", Ramsi::IID());
     win_log!("uuid_path {}", uuid_path_string);
 
     let uuid_path = Path::new(uuid_path_string.as_str());
-    let (key, disp) = hkcu.create_subkey(uuid_path)?;
+    let (key, disp) = hklm.create_subkey(uuid_path)?;
     match disp {
         REG_CREATED_NEW_KEY => win_log!("A new key has been created"),
         REG_OPENED_EXISTING_KEY => win_log!("An existing key has been opened"),
@@ -125,7 +126,7 @@ fn imp_register_server(pipe_suffix: Option<String>) -> Result<(), Box<dyn std::e
     let inproc_path = uuid_path.join("InProcServer32");
     win_log!("inproc_path {}", inproc_path.display());
 
-    let (key, disp) = hkcu.create_subkey(&inproc_path)?;
+    let (key, disp) = hklm.create_subkey(&inproc_path)?;
     match disp {
         REG_CREATED_NEW_KEY => win_log!("A new key has been created"),
         REG_OPENED_EXISTING_KEY => win_log!("An existing key has been opened"),
@@ -141,7 +142,7 @@ fn imp_register_server(pipe_suffix: Option<String>) -> Result<(), Box<dyn std::e
     win_log!("uuid_path {}", uuid_path_string);
 
     let amsi_provider_path = Path::new(amsi_provider_path_string.as_str());
-    let (key, disp) = hkcu.create_subkey(amsi_provider_path)?;
+    let (key, disp) = hklm.create_subkey(amsi_provider_path)?;
     match disp {
         REG_CREATED_NEW_KEY => win_log!("A new key has been created"),
         REG_OPENED_EXISTING_KEY => win_log!("An existing key has been opened"),
@@ -163,16 +164,16 @@ pub extern "system" fn DllUnregisterServer() -> HResult {
 
 fn imp_unregister_server() -> Result<(), Box<dyn std::error::Error>> {
     win_log!("DllUnregisterServer start");
-    let hkcu = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
 
     // Unregister this CLSID as an anti-malware provider.
     let amsi_provider_path_string =
         format!("Software\\Microsoft\\AMSI\\Providers\\{}", Ramsi::IID());
-    hkcu.delete_subkey_all(amsi_provider_path_string)?;
+    hklm.delete_subkey_all(amsi_provider_path_string)?;
 
     // Unregister this CLSID as a COM server.
     let CLSID_path = format!("Software\\Classes\\CLSID\\{}", Ramsi::IID());
-    hkcu.delete_subkey_all(CLSID_path)?;
+    hklm.delete_subkey_all(CLSID_path)?;
 
     win_log!("DllUnregisterServer end");
     Ok(())

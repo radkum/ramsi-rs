@@ -4,6 +4,8 @@ mod antimalware;
 mod attribute;
 mod report;
 mod scan;
+mod keywords;
+
 use core::result::Result;
 use std::{cell::RefCell, path::Path, sync::atomic::AtomicU32};
 
