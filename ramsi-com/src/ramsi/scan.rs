@@ -1,57 +1,8 @@
 use log::debug;
-use macros::lowercase_const_array;
-use phf::phf_set;
 use ps_parser::{PowerShellSession, Variables};
 
 use super::Ramsi_Impl;
-lowercase_const_array! {
-const BLACKLIST_KEYWORDS: [&str; 6] = [
-    "amsi.dll",
-    "AMSI\\Providers\\",
-    "AmsiEnable",
-    "AmsiUtils",
-    "amsiInitFailed",
-    "invoke-mimikatz",
-];
-}
-lowercase_const_array! {
-const SUSPICIOUS_KEYWORDS: &[&str] = &[
-    "iex",
-    "invoke",
-    "start",
-    "execute",
-    "run",
-    "create",
-    "token",
-    "Add-Type",
-    "security",
-    "Privileges",
-    "Bypass",
-    "cryptor",
-    "RemoteThread",
-    "Crypto",
-    "Method",
-    "DynamicAssembly",
-    "Define",
-    "DeflateStream",
-    "IoControl",
-    "DllImport",
-    "Emit",
-    "EncodedCommand",
-    "ExpandString",
-    "Free",
-    "Base64",
-    "GetAssemblies",
-    "GetAsyncKeyState",
-    "GetConstructor",
-    "Virtual",
-    "alloc",
-];
-}
-
-static CLEANLIST_SHA256_MAP: phf::Set<&'static str> = phf_set! {
-    "cf07194ee232eb531e15f690000d19846dea69cf05504782658afcfacb9228a2",
-};
+use super::keywords::*;
 
 #[derive(Debug, PartialEq)]
 pub(super) enum ScanStatus {
@@ -88,9 +39,8 @@ impl Ramsi_Impl {
         let mut hasher = Sha256::new();
         hasher.update(_script_content.as_bytes());
         let sha256 = hasher.finalize();
-        let sha256_hex = format!("{:x}", sha256);
 
-        if CLEANLIST_SHA256_MAP.contains(&sha256_hex.as_str()) {
+        if CLEANLIST_SHA256_SET.contains(&sha256) {
             return Some(ScanStatus::Clean);
         }
 
@@ -108,12 +58,12 @@ impl Ramsi_Impl {
             }
         }
 
-        for s in SUSPICIOUS_KEYWORDS.iter() {
-            if script_content.contains(s) {
-                debug!("Suspicious keyword in script detected. Keyword: {s}");
-                return Some(ScanStatus::Suspicious);
-            }
-        }
+        // for s in SUSPICIOUS_FUNCTIONS.iter() {
+        //     if script_content.contains(s) {
+        //         debug!("Suspicious keyword in script detected. Keyword: {s}");
+        //         return Some(ScanStatus::Suspicious);
+        //     }
+        // }
 
         None
     }

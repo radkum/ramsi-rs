@@ -24,6 +24,10 @@ log.workspace = true
 fern = { version = "0.7.1", features = ["date-based"] }
 chrono = "0.4.42"
 
+[dev-dependencies]
+hex = "0.4.3"
+hex-literal = "0.3"
+
 [dependencies.windows]
 workspace = true
 features = [
