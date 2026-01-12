@@ -4,6 +4,9 @@ pub mod ffi_string;
 pub use ffi_string::{FfiString, PipeName};
 use serde::{Deserialize, Serialize};
 
+pub type DynError = Box<dyn std::error::Error>;
+pub type DynResult<T> = Result<T, DynError>;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RamsiMessage {
     message: String,

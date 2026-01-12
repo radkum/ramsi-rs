@@ -76,8 +76,7 @@ pub fn compile_sha256_set(input: TokenStream) -> TokenStream {
         }
 
         let mut buf = [0u8; 32];
-        hex::decode_to_slice(&s, &mut buf)
-            .expect("invalid hex");
+        hex::decode_to_slice(&s, &mut buf).expect("invalid hex");
 
         let bytes = buf.iter().map(|b| quote! { #b });
 
