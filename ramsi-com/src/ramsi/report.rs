@@ -38,17 +38,20 @@ impl Ramsi_Impl {
 
         if let Some(runtime) = &*RUNTIME {
             runtime.block_on(async {
-                if !self.pipe_client.borrow().active()
-                    && let Err(err) = self.pipe_client.borrow_mut().connect()
+                if !self.pipe_client.read().await.active()
+                    && let Err(err) = self.pipe_client.write().await.connect()
                 {
                     error!("{err}");
                     return;
                 }
 
-                let _ = self.pipe_client
-                    .borrow_mut()
+                let _ = self
+                    .pipe_client
+                    .write()
+                    .await
                     .send(RamsiMessage::new(&amsi_event.to_string()))
-                    .await.inspect_err(|e| error!("{e}"));
+                    .await
+                    .inspect_err(|e| error!("{e}"));
             });
         }
     }

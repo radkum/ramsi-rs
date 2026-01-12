@@ -220,16 +220,13 @@ impl Ramsi_Impl {
         let mut cs_lowercased = BTreeSet::new();
         let mut cs_commands_and_methods = BTreeSet::new();
         for token in tokens.iter() {
-            if let ps_parser::Token::Command(cmd) = token 
-                && cmd.name().eq_ignore_ascii_case("add-type") 
-                    && let Ok((lowercased_strings, commands_and_methods)) =
-                        Self::parse_add_type(cmd)
-                    {
-                        cs_commands_and_methods.extend(commands_and_methods);
-                        cs_lowercased.extend(lowercased_strings);
-                    }
-                
-            
+            if let ps_parser::Token::Command(cmd) = token
+                && cmd.name().eq_ignore_ascii_case("add-type")
+                && let Ok((lowercased_strings, commands_and_methods)) = Self::parse_add_type(cmd)
+            {
+                cs_commands_and_methods.extend(commands_and_methods);
+                cs_lowercased.extend(lowercased_strings);
+            }
         }
         (cs_lowercased, cs_commands_and_methods)
     }
@@ -244,10 +241,8 @@ impl Ramsi_Impl {
                         if arg_name == "-command" {
                             return cmd.args().get(i + 1).map(|s| s.to_ascii_lowercase());
                         } else if arg_name == "-version" {
-                            let ps_version = cmd
-                                .args()
-                                .get(i + 1)
-                                .and_then(|s| s.parse::<u32>().ok());
+                            let ps_version =
+                                cmd.args().get(i + 1).and_then(|s| s.parse::<u32>().ok());
                             powershell_version = match ps_version {
                                 Some(2) => Some(PsVersion::V2),
                                 Some(3) => Some(PsVersion::V3AndAbove),

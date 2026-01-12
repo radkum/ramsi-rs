@@ -7,7 +7,11 @@ mod report;
 mod scan;
 
 use core::result::Result;
-use std::{cell::RefCell, path::Path, sync::atomic::AtomicU32};
+use std::{
+    cell::RefCell,
+    path::Path,
+    sync::{Arc, atomic::AtomicU32},
+};
 
 use antimalware::{PsVersion, ScriptType};
 use fern::Dispatch;
@@ -15,6 +19,7 @@ use log::{LevelFilter, debug, error};
 use ps_parser::{PowerShellSession, Variables};
 use report::PipeClient;
 use shared::{PipeName, constants::RAMSI_PIPE_SUFFIX};
+use tokio::sync::RwLock;
 use windows::Win32::System::{
     Antimalware::*,
     Com::{IClassFactory, IClassFactory_Impl},
@@ -34,7 +39,7 @@ pub struct Ramsi {
     ps_session: RefCell<PowerShellSession>,
     process_info: ProcessInfo,
     request_number: AtomicU32,
-    pipe_client: RefCell<PipeClient>,
+    pipe_client: Arc<RwLock<PipeClient>>,
 }
 
 impl Ramsi {
@@ -70,7 +75,7 @@ impl Ramsi {
             ps_session: RefCell::new(PowerShellSession::new().with_variables(Variables::env())),
             process_info,
             request_number: AtomicU32::new(0),
-            pipe_client: RefCell::new(PipeClient::new(&pipe_name)),
+            pipe_client: Arc::new(RwLock::new(PipeClient::new(&pipe_name))),
         }
     }
 
