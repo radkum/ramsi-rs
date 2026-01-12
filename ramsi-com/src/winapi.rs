@@ -1,3 +1,5 @@
+#![allow(clippy::upper_case_acronyms)]
+
 use windows::Win32::{
     Foundation::{HMODULE, UNICODE_STRING},
     System::LibraryLoader::GetModuleFileNameA,
@@ -100,7 +102,7 @@ pub fn get_command_line_from_pid(pid: u32) -> Result<String> {
     let params: RTL_USER_PROCESS_PARAMETERS = read_memory(handle, peb.ProcessParameters as _)?;
 
     if params.CommandLine.Buffer.is_null() {
-        return Err(format!("Command line is null").into());
+        return Err("Command line is null".to_string().into());
     }
     // UNICODE_STRING.Length is already in bytes, not characters.
     // Multiplying by 2 would read beyond the actual buffer causing truncation.

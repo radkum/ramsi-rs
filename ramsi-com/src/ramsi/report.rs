@@ -45,15 +45,10 @@ impl Ramsi_Impl {
                     return;
                 }
 
-                let res = self
-                    .pipe_client
+                let _ = self.pipe_client
                     .borrow_mut()
                     .send(RamsiMessage::new(&amsi_event.to_string()))
-                    .await;
-
-                if let Err(e) = res {
-                    error!("{e}");
-                }
+                    .await.inspect_err(|e| error!("{e}"));
             });
         }
     }

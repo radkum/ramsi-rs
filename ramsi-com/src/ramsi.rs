@@ -2,15 +2,17 @@
 
 mod antimalware;
 mod attribute;
+mod keywords;
 mod report;
 mod scan;
-mod keywords;
 
 use core::result::Result;
 use std::{cell::RefCell, path::Path, sync::atomic::AtomicU32};
 
+use antimalware::{PsVersion, ScriptType};
 use fern::Dispatch;
 use log::{LevelFilter, debug, error};
+use ps_parser::{PowerShellSession, Variables};
 use report::PipeClient;
 use shared::{PipeName, constants::RAMSI_PIPE_SUFFIX};
 use windows::Win32::System::{
@@ -21,7 +23,6 @@ use windows_core::*;
 use winreg::{RegKey, enums::*};
 
 use crate::utils::ProcessInfo;
-
 pub(super) static mut CLASS_FACTORY: Option<StaticComObject<Ramsi>> = None;
 
 #[interface("b8614e83-84ac-45fb-82a8-21711aaf07f2")]
@@ -30,6 +31,7 @@ unsafe trait IRamsi: IAntimalwareProvider2 {}
 #[implement(IRamsi, IClassFactory)]
 
 pub struct Ramsi {
+    ps_session: RefCell<PowerShellSession>,
     process_info: ProcessInfo,
     request_number: AtomicU32,
     pipe_client: RefCell<PipeClient>,
@@ -43,6 +45,7 @@ impl Ramsi {
         let key = hkcu.open_subkey(uuid_path)?;
         let pipe_suffix: String = key.get_value("pipe")?;
         let pipe_name = PipeName::from_suffix(&pipe_suffix);
+
         pipe_name.verify()?;
         Ok(pipe_name.to_string())
     }
@@ -64,6 +67,7 @@ impl Ramsi {
         };
 
         Self {
+            ps_session: RefCell::new(PowerShellSession::new().with_variables(Variables::env())),
             process_info,
             request_number: AtomicU32::new(0),
             pipe_client: RefCell::new(PipeClient::new(&pipe_name)),
