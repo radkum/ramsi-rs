@@ -93,6 +93,8 @@ regsvr32 /u dist\ramsi_com.dll
 - secure and auntheticate pipes
 - add certificate
 - improve cli
+- support for win32
+- log to event viewer
 
 ## License
 

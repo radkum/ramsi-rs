@@ -18,7 +18,7 @@ use fern::Dispatch;
 use log::{LevelFilter, debug, error};
 use ps_parser::{PowerShellSession, Variables};
 use report::PipeClient;
-use shared::{PipeName, constants::RAMSI_PIPE_SUFFIX};
+use shared::{PipeName, constants::RAMSI_PIPE_SUFFIX, win_log};
 use tokio::sync::RwLock;
 use windows::Win32::System::{
     Antimalware::*,
@@ -139,10 +139,12 @@ impl IClassFactory_Impl for Ramsi_Impl {
         iid: *const windows_core::GUID,
         interface: *mut *mut std::ffi::c_void,
     ) -> windows_core::Result<()> {
+        win_log!("Ramsi::CreateInstance");
         Self::query_interface(iid, interface)
     }
 
     fn LockServer(&self, _: BOOL) -> windows_core::Result<()> {
+        win_log!("Ramsi::LockServer");
         Ok(())
     }
 }
