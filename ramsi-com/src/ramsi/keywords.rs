@@ -5,7 +5,7 @@ lowercase_const_array! {
 pub(super) const BLACKLIST_KEYWORDS: &[&str] = [
     "amsi.dll",
     "amsiInitFailed",
-    "AMSI/Providers/",
+    "AMSI/Providers",
     "AMSI/Providers/",
     "AMSI/Providers\\",
     "AMSI\\Providers",
