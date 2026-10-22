@@ -5,8 +5,14 @@ use std::{process::Command, time::Duration};
 
 use shared::{ScanEvent, ScanStatus, constants::CONFIG_KEY};
 use tokio::{io::AsyncReadExt, net::windows::named_pipe::ServerOptions, time::timeout};
-use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
-use windows_core::{HSTRING, PCWSTR, s};
+use windows::Win32::{
+    Security::{
+        Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1},
+        SECURITY_ATTRIBUTES,
+    },
+    System::LibraryLoader::{GetProcAddress, LoadLibraryW},
+};
+use windows_core::{HSTRING, PCWSTR, s, w};
 use winreg::{RegKey, enums::HKEY_LOCAL_MACHINE};
 
 struct Registered(windows::Win32::Foundation::HMODULE);
@@ -64,9 +70,27 @@ fn config() -> RegKey {
 #[ignore]
 async fn powershell_is_blocked_and_reported() {
     let suffix = format!("ramsi-e2e-{}", std::process::id());
-    let mut server = ServerOptions::new()
-        .create(format!(r"\\.\pipe\{suffix}"))
+    // owned by Administrators like the ramsi-cli pipe, or the provider will not
+    // connect
+    let mut attributes = SECURITY_ATTRIBUTES {
+        nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+        ..Default::default()
+    };
+    let mut server = unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            w!("O:BAD:(A;OICI;GA;;;BA)(A;OICI;GRGWGX;;;AU)"),
+            SDDL_REVISION_1,
+            &mut attributes.lpSecurityDescriptor as *mut _ as _,
+            None,
+        )
         .unwrap();
+        ServerOptions::new()
+            .create_with_security_attributes_raw(
+                format!(r"\\.\pipe\{suffix}"),
+                &mut attributes as *mut _ as _,
+            )
+            .unwrap()
+    };
     let _registered = Registered::new(&suffix);
     config().set_value("mode", &"block").unwrap();
     // a keyword only this provider knows, other providers on the machine may block

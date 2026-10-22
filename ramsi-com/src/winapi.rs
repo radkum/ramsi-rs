@@ -1,14 +1,13 @@
 use windows::Win32::{
-    Foundation::{HANDLE, HMODULE},
-    Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation},
-    System::{
-        Environment::GetCommandLineW,
-        LibraryLoader::GetModuleFileNameW,
-        Pipes::GetNamedPipeServerProcessId,
-        Threading::{OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION},
+    Foundation::{HANDLE, HLOCAL, HMODULE, LocalFree},
+    Security::{
+        Authorization::{GetSecurityInfo, SE_KERNEL_OBJECT},
+        IsWellKnownSid, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
+        WinBuiltinAdministratorsSid, WinLocalSystemSid,
     },
+    System::{Environment::GetCommandLineW, LibraryLoader::GetModuleFileNameW},
 };
-use windows_core::{Owned, Result};
+use windows_core::Result;
 
 #[allow(overflowing_literals)]
 pub const E_NOT_SUFFICIENT_BUFFER: i32 = 0x8007007a_i32;
@@ -28,31 +27,27 @@ pub fn get_command_line() -> String {
     unsafe { GetCommandLineW().to_string() }.unwrap_or_default()
 }
 
-// elevated admins and SYSTEM, so a user cannot squat the pipe name
-pub fn pipe_server_is_elevated(pipe: HANDLE) -> Result<bool> {
-    let mut pid = 0;
+// owned by Administrators or SYSTEM, so a user cannot squat the pipe name
+pub fn pipe_owner_is_admin(pipe: HANDLE) -> Result<bool> {
+    let mut owner = PSID::default();
+    let mut sd = PSECURITY_DESCRIPTOR::default();
     unsafe {
-        GetNamedPipeServerProcessId(pipe, &mut pid)?;
-        let process = Owned::new(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid)?);
-        let mut token = HANDLE::default();
-        OpenProcessToken(*process, TOKEN_QUERY, &mut token)?;
-        token_is_elevated(*Owned::new(token))
+        GetSecurityInfo(
+            pipe,
+            SE_KERNEL_OBJECT,
+            OWNER_SECURITY_INFORMATION,
+            Some(&mut owner),
+            None,
+            None,
+            None,
+            Some(&mut sd),
+        )
+        .ok()?;
+        let admin = IsWellKnownSid(owner, WinBuiltinAdministratorsSid).as_bool()
+            || IsWellKnownSid(owner, WinLocalSystemSid).as_bool();
+        LocalFree(Some(HLOCAL(sd.0)));
+        Ok(admin)
     }
-}
-
-fn token_is_elevated(token: HANDLE) -> Result<bool> {
-    let mut elevation = TOKEN_ELEVATION::default();
-    let mut size = 0;
-    unsafe {
-        GetTokenInformation(
-            token,
-            TokenElevation,
-            Some(&mut elevation as *mut _ as _),
-            size_of::<TOKEN_ELEVATION>() as u32,
-            &mut size,
-        )?
-    };
-    Ok(elevation.TokenIsElevated != 0)
 }
 
 #[cfg(test)]
@@ -60,28 +55,6 @@ mod tests {
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 
     use super::*;
-
-    #[test]
-    fn lua_token_is_not_elevated() {
-        use windows::Win32::{
-            Security::{CreateRestrictedToken, LUA_TOKEN, TOKEN_ASSIGN_PRIMARY, TOKEN_DUPLICATE},
-            System::Threading::GetCurrentProcess,
-        };
-
-        unsafe {
-            let mut token = HANDLE::default();
-            OpenProcessToken(
-                GetCurrentProcess(),
-                TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY,
-                &mut token,
-            )
-            .unwrap();
-            let token = Owned::new(token);
-            let mut lua = HANDLE::default();
-            CreateRestrictedToken(*token, LUA_TOKEN, None, None, None, &mut lua).unwrap();
-            assert!(!token_is_elevated(*Owned::new(lua)).unwrap());
-        }
-    }
 
     #[test]
     fn module_file_name_of_current_exe() {

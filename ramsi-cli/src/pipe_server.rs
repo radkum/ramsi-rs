@@ -86,8 +86,9 @@ pub fn create_writer_with_security_attrs(
         ConvertStringSecurityDescriptorToSecurityDescriptorA, SDDL_REVISION_1,
     };
 
+    // owner BA can only be set by an elevated process, providers check it
     let input =
-        CString::new("D:(D;OICI;GA;;;BG)(D;OICI;GA;;;AN)(A;OICI;GRGWGX;;;AU)(A;OICI;GA;;;BA)")?;
+        CString::new("O:BAD:(D;OICI;GA;;;BG)(D;OICI;GA;;;AN)(A;OICI;GRGWGX;;;AU)(A;OICI;GA;;;BA)")?;
 
     let mut attributes: SECURITY_ATTRIBUTES = unsafe { zeroed() };
 
