@@ -74,11 +74,9 @@ pub extern "system" fn DllGetClassObject(
 
 #[unsafe(no_mangle)]
 pub extern "system" fn DllCanUnloadNow() -> HResult {
-    //terminate
+    // S_FALSE: the static class factory lives until DLL_PROCESS_DETACH
     win_log!("DllCanUnloadNow");
-    let result = Ramsi_Impl::terminate();
-    win_log!("Ramsi_Impl::terminate result: {}", result);
-    0
+    1
 }
 
 #[unsafe(no_mangle)]
