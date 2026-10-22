@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 use shared::{
     DynResult, PipeName,
     constants::{
-        CONFIG_KEY, DEFAULT_LOG_DIR, LOG_DIR_SDDL, RAMSI_CLSID, RAMSI_PIPE_SUFFIX, config_value::*,
+        CONFIG_KEY, DEFAULT_LOG_DIR, LOG_DIR_SDDL, RAMSI_CLSID, RAMSI_PIPE_SUFFIX, RULES_SDDL,
+        config_value::*,
     },
 };
 use windows::Win32::{
@@ -14,8 +15,9 @@ use windows::Win32::{
             ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1, SE_FILE_OBJECT,
             SetNamedSecurityInfoW,
         },
-        DACL_SECURITY_INFORMATION, GetSecurityDescriptorDacl, PROTECTED_DACL_SECURITY_INFORMATION,
-        PSECURITY_DESCRIPTOR,
+        DACL_SECURITY_INFORMATION, GetSecurityDescriptorDacl, GetSecurityDescriptorOwner,
+        OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
+        PSID,
     },
 };
 use windows_core::{BOOL, HSTRING};
@@ -81,10 +83,15 @@ pub fn secure_log_dir() -> DynResult<PathBuf> {
 
 fn secure_dir(dir: &Path) -> DynResult<()> {
     std::fs::create_dir_all(dir)?;
+    secure_path(dir, LOG_DIR_SDDL)
+}
+
+// applies the DACL of `sddl` and its owner, if it has one
+fn secure_path(path: &Path, sddl: &str) -> DynResult<()> {
     unsafe {
         let mut sd = PSECURITY_DESCRIPTOR::default();
         ConvertStringSecurityDescriptorToSecurityDescriptorW(
-            &HSTRING::from(LOG_DIR_SDDL),
+            &HSTRING::from(sddl),
             SDDL_REVISION_1,
             &mut sd,
             None,
@@ -92,13 +99,19 @@ fn secure_dir(dir: &Path) -> DynResult<()> {
         let mut present = BOOL(0);
         let mut defaulted = BOOL(0);
         let mut dacl: *mut ACL = std::ptr::null_mut();
-        let res =
-            GetSecurityDescriptorDacl(sd, &mut present, &mut dacl, &mut defaulted).and_then(|_| {
+        let mut owner = PSID::default();
+        let res = GetSecurityDescriptorDacl(sd, &mut present, &mut dacl, &mut defaulted)
+            .and_then(|_| GetSecurityDescriptorOwner(sd, &mut owner, &mut defaulted))
+            .and_then(|_| {
+                let mut info = DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION;
+                if !owner.is_invalid() {
+                    info |= OWNER_SECURITY_INFORMATION;
+                }
                 SetNamedSecurityInfoW(
-                    &HSTRING::from(dir.as_os_str()),
+                    &HSTRING::from(path.as_os_str()),
                     SE_FILE_OBJECT,
-                    DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
-                    None,
+                    info,
+                    (!owner.is_invalid()).then_some(owner),
                     None,
                     Some(dacl),
                     None,
@@ -128,6 +141,12 @@ pub fn set(name: &str, value: &str) -> DynResult<()> {
         _ if name == PIPE => {
             PipeName::from_suffix(value).verify()?;
             key.set_value(name, &value)?;
+        },
+        _ if name == RULES => {
+            // providers load only a file that just admins can change
+            let path = std::path::absolute(value)?;
+            secure_path(&path, RULES_SDDL)?;
+            key.set_value(name, &path.display().to_string())?;
         },
         _ => key.set_value(name, &value)?,
     }
@@ -195,18 +214,14 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn secured_dir_has_protected_dacl() {
-        // reused across runs, never removed
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../target/acl-test");
-        secure_dir(&dir).unwrap();
-
-        let sddl = unsafe {
+    fn sddl_of(path: &Path) -> String {
+        let info = OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
+        unsafe {
             let mut sd = PSECURITY_DESCRIPTOR::default();
             GetNamedSecurityInfoW(
-                &HSTRING::from(dir.as_os_str()),
+                &HSTRING::from(path.as_os_str()),
                 SE_FILE_OBJECT,
-                DACL_SECURITY_INFORMATION,
+                info,
                 None,
                 None,
                 None,
@@ -219,7 +234,7 @@ mod tests {
             ConvertSecurityDescriptorToStringSecurityDescriptorW(
                 sd,
                 SDDL_REVISION_1,
-                DACL_SECURITY_INFORMATION,
+                info,
                 &mut text,
                 None,
             )
@@ -228,9 +243,31 @@ mod tests {
             LocalFree(Some(HLOCAL(text.0 as _)));
             LocalFree(Some(HLOCAL(sd.0)));
             sddl
-        };
+        }
+    }
 
-        assert!(sddl.starts_with("D:P"), "{sddl}");
+    #[test]
+    fn secured_rules_file_is_owned_by_admins() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../target/acl-test-cli");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("rules.toml");
+        let _ = std::fs::remove_file(&path);
+        std::fs::write(&path, "").unwrap();
+
+        secure_path(&path, RULES_SDDL).unwrap();
+
+        // AI: Windows marks the DACL as auto-inherited
+        assert_eq!(sddl_of(&path).replace("D:PAI", "D:P"), RULES_SDDL);
+    }
+
+    #[test]
+    fn secured_dir_has_protected_dacl() {
+        // reused across runs, never removed
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../target/acl-test");
+        secure_dir(&dir).unwrap();
+
+        let sddl = sddl_of(&dir);
+        assert!(sddl.contains("D:P"), "{sddl}");
         assert!(sddl.contains("(A;OICIIO;FA;;;CO)"), "{sddl}");
         assert!(!sddl.contains(";;;BU)"), "{sddl}");
     }

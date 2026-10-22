@@ -4,12 +4,14 @@ use shared::constants::LOG_DIR_SDDL;
 use windows::Win32::{
     Foundation::{ERROR_ALREADY_EXISTS, HANDLE, HLOCAL, HMODULE, LocalFree},
     Security::{
+        ACCESS_ALLOWED_ACE, ACE_HEADER, ACL,
         Authorization::{
-            ConvertStringSecurityDescriptorToSecurityDescriptorW, GetSecurityInfo, SDDL_REVISION_1,
-            SE_KERNEL_OBJECT,
+            ConvertStringSecurityDescriptorToSecurityDescriptorW, GetNamedSecurityInfoW,
+            GetSecurityInfo, SDDL_REVISION_1, SE_FILE_OBJECT, SE_KERNEL_OBJECT,
         },
-        IsWellKnownSid, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
-        SECURITY_ATTRIBUTES, WinBuiltinAdministratorsSid, WinLocalSystemSid,
+        DACL_SECURITY_INFORMATION, GetAce, INHERIT_ONLY_ACE, IsWellKnownSid,
+        OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES,
+        WinBuiltinAdministratorsSid, WinLocalSystemSid,
     },
     Storage::FileSystem::CreateDirectoryW,
     System::{Environment::GetCommandLineW, LibraryLoader::GetModuleFileNameW},
@@ -62,6 +64,62 @@ pub fn create_log_dir(dir: &Path) -> std::io::Result<()> {
     }
 }
 
+// owned by Administrators or SYSTEM and no one else may write, change or
+// replace it
+pub fn only_admins_can_write(path: &Path) -> Result<bool> {
+    const ACCESS_ALLOWED_ACE_TYPE: u8 = 0;
+    const WRITE_RIGHTS: u32 =
+        0x2 | 0x4 | 0x40 | 0x10000 | 0x40000 | 0x80000 | 0x10000000 | 0x40000000;
+
+    let mut owner = PSID::default();
+    let mut dacl: *mut ACL = std::ptr::null_mut();
+    let mut sd = PSECURITY_DESCRIPTOR::default();
+    unsafe {
+        GetNamedSecurityInfoW(
+            &HSTRING::from(path.as_os_str()),
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+            Some(&mut owner),
+            None,
+            Some(&mut dacl),
+            None,
+            &mut sd,
+        )
+        .ok()?;
+        let is_admin = |sid: PSID| {
+            IsWellKnownSid(sid, WinBuiltinAdministratorsSid).as_bool()
+                || IsWellKnownSid(sid, WinLocalSystemSid).as_bool()
+        };
+        // a NULL DACL grants everyone full access
+        let mut safe = is_admin(owner) && !dacl.is_null();
+        for i in 0..if dacl.is_null() {
+            0
+        } else {
+            (*dacl).AceCount as u32
+        } {
+            let mut ace = std::ptr::null_mut();
+            if GetAce(dacl, i, &mut ace).is_err() {
+                safe = false;
+                break;
+            }
+            let header = &*(ace as *const ACE_HEADER);
+            if header.AceType != ACCESS_ALLOWED_ACE_TYPE
+                || header.AceFlags as u32 & INHERIT_ONLY_ACE.0 != 0
+            {
+                continue;
+            }
+            let allowed = &*(ace as *const ACCESS_ALLOWED_ACE);
+            let sid = PSID(&allowed.SidStart as *const u32 as _);
+            if allowed.Mask & WRITE_RIGHTS != 0 && !is_admin(sid) {
+                safe = false;
+                break;
+            }
+        }
+        LocalFree(Some(HLOCAL(sd.0)));
+        Ok(safe)
+    }
+}
+
 // owned by Administrators or SYSTEM, so a user cannot squat the pipe name
 pub fn pipe_owner_is_admin(pipe: HANDLE) -> Result<bool> {
     let mut owner = PSID::default();
@@ -91,15 +149,61 @@ mod tests {
 
     use super::*;
 
+    // a file under target/acl-test-rules created with `sddl`
+    fn file_with_sddl(name: &str, sddl: Option<&str>) -> std::path::PathBuf {
+        use windows::Win32::Storage::FileSystem::{
+            CREATE_NEW, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_GENERIC_WRITE, FILE_SHARE_NONE,
+        };
+
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../target/acl-test-rules");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(name);
+        let _ = std::fs::remove_file(&path);
+        let mut attributes = SECURITY_ATTRIBUTES {
+            nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+            ..Default::default()
+        };
+        unsafe {
+            if let Some(sddl) = sddl {
+                ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                    &HSTRING::from(sddl),
+                    SDDL_REVISION_1,
+                    &mut attributes.lpSecurityDescriptor as *mut _ as _,
+                    None,
+                )
+                .unwrap();
+            }
+            let file = CreateFileW(
+                &HSTRING::from(path.as_os_str()),
+                FILE_GENERIC_WRITE.0,
+                FILE_SHARE_NONE,
+                Some(&attributes),
+                CREATE_NEW,
+                FILE_ATTRIBUTE_NORMAL,
+                None,
+            )
+            .unwrap();
+            let _ = windows::Win32::Foundation::CloseHandle(file);
+        }
+        path
+    }
+
+    #[test]
+    fn rules_file_must_be_admin_owned_and_admin_writable() {
+        let secure = file_with_sddl("secure.toml", Some(shared::constants::RULES_SDDL));
+        assert!(only_admins_can_write(&secure).unwrap());
+
+        let users_write =
+            file_with_sddl("users-write.toml", Some("O:BAD:P(A;;FA;;;BA)(A;;FW;;;AU)"));
+        assert!(!only_admins_can_write(&users_write).unwrap());
+
+        let user_owned = file_with_sddl("user-owned.toml", None);
+        assert!(!only_admins_can_write(&user_owned).unwrap());
+    }
+
     #[test]
     fn log_dir_gets_protected_dacl() {
-        use windows::Win32::Security::{
-            Authorization::{
-                ConvertSecurityDescriptorToStringSecurityDescriptorW, GetNamedSecurityInfoW,
-                SE_FILE_OBJECT,
-            },
-            DACL_SECURITY_INFORMATION,
-        };
+        use windows::Win32::Security::Authorization::ConvertSecurityDescriptorToStringSecurityDescriptorW;
         use windows_core::PWSTR;
 
         // created on the first run, never removed
