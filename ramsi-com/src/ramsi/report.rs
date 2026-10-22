@@ -5,7 +5,7 @@ use log::{debug, error};
 pub use pipe_client::PipeClient;
 use shared::ScanEvent;
 use tokio::runtime::Runtime;
-use windows::Win32::System::Antimalware::*;
+use windows::Win32::System::{Antimalware::*, Threading::GetCurrentThreadId};
 
 use super::{Ramsi_Impl, ScanResult};
 use crate::utils::dump;
@@ -22,7 +22,7 @@ impl Ramsi_Impl {
         let mut amsi_event = ScanEvent {
             time: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
             pid: process_info.pid(),
-            tid: process_info.tid(),
+            tid: unsafe { GetCurrentThreadId() },
             process: process_info.file_name().to_string(),
             cmd_line: process_info.cmd_line().to_string(),
             app_name: Self::string_attribute(stream, AMSI_ATTRIBUTE_APP_NAME),
