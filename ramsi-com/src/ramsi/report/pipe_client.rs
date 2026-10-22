@@ -367,8 +367,7 @@ mod tests {
             let _ = CloseHandle(process);
         }
 
-        // STATUS_DLL_INIT_FAILED: no desktop the LUA token may use, e.g. a CI service
-        // session
+        // STATUS_DLL_INIT_FAILED: no desktop for a LUA token, e.g. in CI
         if res.is_none() && exit_code == 0xc0000142 {
             eprintln!("SKIPPED: a non-elevated process cannot start in this session");
             return;

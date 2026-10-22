@@ -64,8 +64,7 @@ pub fn create_log_dir(dir: &Path) -> std::io::Result<()> {
     }
 }
 
-// owned by Administrators or SYSTEM and no one else may write, change or
-// replace it
+// only Administrators or SYSTEM can write, change or replace it
 pub fn only_admins_can_write(path: &Path) -> Result<bool> {
     const ACCESS_ALLOWED_ACE_TYPE: u8 = 0;
     const WRITE_RIGHTS: u32 =
