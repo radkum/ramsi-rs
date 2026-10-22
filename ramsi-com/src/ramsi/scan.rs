@@ -46,15 +46,6 @@ struct Tokens {
     ttypes: BTreeSet<String>,
 }
 
-impl Tokens {
-    fn extend(&mut self, other: Tokens) {
-        self.powershell_version = self.powershell_version.take().or(other.powershell_version);
-        self.script_strings.extend(other.script_strings);
-        self.commands_and_methods.extend(other.commands_and_methods);
-        self.ttypes.extend(other.ttypes);
-    }
-}
-
 struct RefTokens<'a> {
     powershell_version: Option<&'a PsVersion>,
     script_strings: BTreeSet<&'a str>,
@@ -135,29 +126,15 @@ impl Scanner {
         script_content: &str,
         parse: impl Fn(&mut PowerShellSession, &str) -> Result<ScriptResult, E>,
     ) -> DynResult<Tokens> {
-        let mut session = self
-            .ps_session
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let script_res = parse(&mut session, script_content)?;
-        // ps-parser 1.2 drops the tokens of a script that runs powershell
-        // -EncodedCommand, its deobfuscated output already holds the decoded
-        // command
-        let invokes_powershell = script_res
-            .errors()
-            .iter()
-            .any(|err| err.to_string().contains("Powershell invocation"));
-        let reparsed = invokes_powershell
-            .then(|| session.parse_script(&script_res.deobfuscated()).ok())
-            .flatten();
         // the session lock is released before token extraction
-        drop(session);
-
-        let mut tokens = Self::extract_tokens(script_res)?;
-        if let Some(reparsed) = reparsed {
-            tokens.extend(Self::extract_tokens(reparsed)?);
-        }
-        Ok(tokens)
+        let script_res = parse(
+            &mut self
+                .ps_session
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+            script_content,
+        )?;
+        Self::extract_tokens(script_res)
     }
 
     fn sha_scan(&self, _script_content: &str) -> Option<ScanResult> {
