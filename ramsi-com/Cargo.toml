@@ -24,8 +24,7 @@ phf = "0.13.1"
 log.workspace = true
 fern = { version = "0.7.1", features = ["date-based"] }
 chrono = "0.4.42"
-
-[dev-dependencies]
+toml = "1.1.8"
 hex = "0.4.3"
 
 [dependencies.windows]
