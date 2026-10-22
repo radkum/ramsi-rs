@@ -10,7 +10,7 @@ use std::{
 };
 
 use com_wrapper::{ComWrapper, RamsiComWrapper};
-use shared::{PipeName, RamsiMessage, constants::RAMSI_PIPE_SUFFIX};
+use shared::{PipeName, ScanEvent, constants::RAMSI_PIPE_SUFFIX};
 use tokio::{runtime::Runtime, time::timeout};
 
 use crate::pipe_server::PipeError;
@@ -121,7 +121,7 @@ async fn trace_amsi_events(pipe_name: &str) -> Result<(), Box<dyn std::error::Er
                     }
                 }
 
-                match pipe_server::message::<RamsiMessage>(&mut connected_client, 1000).await {
+                match pipe_server::message::<ScanEvent>(&mut connected_client, 1000).await {
                     Ok(input_message) => {
                         println!("{}", input_message);
                     },

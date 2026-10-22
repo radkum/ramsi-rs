@@ -5,3 +5,6 @@ edition = "2024"
 
 [dependencies]
 serde = { workspace = true, features = ["derive", "rc"] }
+
+[dev-dependencies]
+serde_json = { workspace = true }

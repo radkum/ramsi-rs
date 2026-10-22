@@ -3,38 +3,48 @@ use std::sync::{LazyLock, atomic::Ordering};
 
 use log::{debug, error};
 pub use pipe_client::PipeClient;
-use shared::RamsiMessage;
+use shared::ScanEvent;
 use tokio::runtime::Runtime;
 use windows::Win32::System::Antimalware::*;
 
-use super::Ramsi_Impl;
-use crate::utils::RamsiEvent;
+use super::{Ramsi_Impl, ScanResult};
+use crate::utils::dump;
 static RUNTIME: LazyLock<Option<Runtime>> = LazyLock::new(|| Runtime::new().ok());
 impl Ramsi_Impl {
-    pub fn report_script(&self, stream: &IAmsiStream, content: String) {
-        let app_name = Self::string_attribute(stream, AMSI_ATTRIBUTE_APP_NAME);
-        let content_name = Self::string_attribute(stream, AMSI_ATTRIBUTE_CONTENT_NAME);
-        let session = Self::u64_attribute::<u64>(stream, AMSI_ATTRIBUTE_SESSION);
-        let process_info = self.process_info.clone();
-
-        let request_num = self.request_number.fetch_add(1, Ordering::AcqRel) + 1;
-
-        let amsi_event = RamsiEvent::new(
-            process_info,
-            app_name,
-            content_name,
+    pub fn report_script(
+        &self,
+        stream: &IAmsiStream,
+        content: String,
+        result: ScanResult,
+        blocked: bool,
+    ) {
+        let process_info = &self.process_info;
+        let mut amsi_event = ScanEvent {
+            time: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            pid: process_info.pid(),
+            tid: process_info.tid(),
+            process: process_info.file_name().to_string(),
+            cmd_line: process_info.cmd_line().to_string(),
+            app_name: Self::string_attribute(stream, AMSI_ATTRIBUTE_APP_NAME),
+            content_name: Self::string_attribute(stream, AMSI_ATTRIBUTE_CONTENT_NAME),
+            session: Self::u64_attribute::<u64>(stream, AMSI_ATTRIBUTE_SESSION),
+            request_number: self.request_number.fetch_add(1, Ordering::AcqRel) + 1,
+            status: result.status,
+            reason: result.reason,
+            blocked,
             content,
-            session,
-            request_num,
-        );
+            content_truncated: false,
+        };
 
         debug!("{}", amsi_event);
 
+        // the dump keeps the full content
         if self.config.dump
-            && let Err(err) = amsi_event.dump(&self.config.log_dir)
+            && let Err(err) = dump(&amsi_event, &self.config.log_dir)
         {
             error!("Failed to dump event: {err}");
         }
+        amsi_event.truncate_content(self.config.max_content);
 
         if let Some(runtime) = &*RUNTIME {
             runtime.block_on(async {
@@ -49,7 +59,7 @@ impl Ramsi_Impl {
                     .pipe_client
                     .write()
                     .await
-                    .send(RamsiMessage::new(&amsi_event.to_string()))
+                    .send(amsi_event)
                     .await
                     .inspect_err(|e| error!("{e}"));
             });
