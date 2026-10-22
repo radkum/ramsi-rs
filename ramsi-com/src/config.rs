@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use log::LevelFilter;
 use shared::{
     PipeName,
-    constants::{CONFIG_KEY, DEFAULT_LOG_DIR, RAMSI_PIPE_SUFFIX, config_value},
+    constants::{CONFIG_KEY, DEFAULT_LOG_DIR, MAX_CONTENT_LIMIT, RAMSI_PIPE_SUFFIX, config_value},
 };
 use winreg::{RegKey, enums::HKEY_LOCAL_MACHINE};
 
@@ -107,7 +107,7 @@ impl Config {
             config.dump = dump != 0;
         }
         if let Ok(max_content) = key.get_value::<u32, _>(config_value::MAX_CONTENT) {
-            config.max_content = max_content as usize;
+            config.max_content = max_content.min(MAX_CONTENT_LIMIT) as usize;
         }
         if let Ok(suffix) = key.get_value::<String, _>(config_value::PIPE) {
             let pipe_name = PipeName::from_suffix(&suffix);
@@ -195,6 +195,18 @@ mod tests {
         key.1.set_value(config_value::PIPE, &"a|b").unwrap();
 
         assert_eq!(Config::from_key(&key.1), Config::default());
+    }
+
+    #[test]
+    fn max_content_is_capped() {
+        let key = TempKey::new("max-content");
+        key.1
+            .set_value(config_value::MAX_CONTENT, &u32::MAX)
+            .unwrap();
+
+        let config = Config::from_key(&key.1);
+
+        assert_eq!(config.max_content, MAX_CONTENT_LIMIT as usize);
     }
 
     #[test]

@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use shared::{
     DynResult, PipeName,
     constants::{
-        CONFIG_KEY, DEFAULT_LOG_DIR, LOG_DIR_SDDL, RAMSI_CLSID, RAMSI_PIPE_SUFFIX, RULES_SDDL,
-        config_value::*,
+        CONFIG_KEY, DEFAULT_LOG_DIR, LOG_DIR_SDDL, MAX_CONTENT_LIMIT, RAMSI_CLSID,
+        RAMSI_PIPE_SUFFIX, RULES_SDDL, config_value::*,
     },
 };
 use windows::Win32::{
@@ -133,6 +133,9 @@ pub fn set(name: &str, value: &str) -> DynResult<()> {
                 "false" => 0,
                 _ => value.parse()?,
             };
+            if name == MAX_CONTENT && value > MAX_CONTENT_LIMIT {
+                return Err(format!("{name} must be at most {MAX_CONTENT_LIMIT}").into());
+            }
             key.set_value(name, &value)?;
         },
         Kind::Choice(choices) if !choices.contains(&value) => {
