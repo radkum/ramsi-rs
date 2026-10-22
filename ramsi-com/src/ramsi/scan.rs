@@ -48,7 +48,7 @@ struct Tokens {
 
 impl Tokens {
     fn extend(&mut self, other: Tokens) {
-        self.powershell_version = self.powershell_version.take().or(other.powershell_version);
+        self.powershell_version = self.powershell_version.take().max(other.powershell_version);
         self.script_strings.extend(other.script_strings);
         self.commands_and_methods.extend(other.commands_and_methods);
         self.ttypes.extend(other.ttypes);
@@ -327,11 +327,11 @@ impl Scanner {
                                 .args()
                                 .get(i + 1)
                                 .and_then(|s| s.split('.').next()?.parse::<u32>().ok());
-                            powershell_version = match ps_version {
+                            powershell_version = powershell_version.take().max(match ps_version {
                                 Some(..=2) => Some(PsVersion::V2),
                                 Some(3..) => Some(PsVersion::V3AndAbove),
                                 _ => Some(PsVersion::Unknown),
-                            };
+                            });
                         }
                     }
                     None
@@ -519,6 +519,22 @@ mod tests {
         assert_eq!(
             status(r#"powershell -c "Write-Host Start the Run""#),
             ScanStatus::NotDetected
+        );
+    }
+
+    #[test]
+    fn version_2_is_not_hidden_by_a_later_version() {
+        assert_eq!(
+            status("powershell -version 2 -c x; powershell -version 5 -c y"),
+            ScanStatus::Suspicious
+        );
+        assert_eq!(
+            status("powershell -version 5 -c x; powershell -version 2 -c y"),
+            ScanStatus::Suspicious
+        );
+        assert_eq!(
+            status(r#"powershell -version 5 -command "powershell -version 2 -c x""#),
+            ScanStatus::Suspicious
         );
     }
 
