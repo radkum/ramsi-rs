@@ -43,12 +43,18 @@ mod tests {
 
     #[test]
     fn without_nul_terminator() {
-        assert_eq!(AmsiString::parse_buff(utf16("Write-Host 1")).unwrap(), "Write-Host 1");
+        assert_eq!(
+            AmsiString::parse_buff(utf16("Write-Host 1")).unwrap(),
+            "Write-Host 1"
+        );
     }
 
     #[test]
     fn stops_at_nul_terminator() {
-        assert_eq!(AmsiString::parse_buff(utf16("abc\0garbage")).unwrap(), "abc");
+        assert_eq!(
+            AmsiString::parse_buff(utf16("abc\0garbage")).unwrap(),
+            "abc"
+        );
     }
 
     #[test]
