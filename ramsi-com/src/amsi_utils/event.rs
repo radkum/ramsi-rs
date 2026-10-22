@@ -29,7 +29,7 @@ impl RamsiEvent {
             self.process_info.pid(),
             self.process_info.tid(),
             self.request_number,
-            self.content_name.replace("\\", "_").replace(":", "_")
+            sanitize_file_name(&self.content_name)
         );
         let info_file_name = format!("{}.info", file_name.as_str());
         let dump_file_name = format!("{}.dmp", file_name.as_str());
@@ -70,6 +70,18 @@ impl RamsiEvent {
     }
 }
 
+// content_name may be any path or URL
+fn sanitize_file_name(name: &str) -> String {
+    name.chars()
+        .map(|c| match c {
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+            c if c.is_control() => '_',
+            c => c,
+        })
+        .take(100)
+        .collect()
+}
+
 impl fmt::Display for RamsiEvent {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         let content_name = if self.content_name.is_empty() {
@@ -106,5 +118,19 @@ impl fmt::Display for RamsiEvent {
             "AmsiEvent {{ request_number: {}, content_name: {}, app_name: {} }}",
             self.request_number, content_name, app_name,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitized_file_name_has_no_reserved_chars() {
+        assert_eq!(
+            sanitize_file_name("https://x/a?b=*|\"<>\0C:\\dir\\f.ps1"),
+            "https___x_a_b=______C__dir_f.ps1"
+        );
+        assert_eq!(sanitize_file_name(&"a".repeat(300)).len(), 100);
     }
 }
