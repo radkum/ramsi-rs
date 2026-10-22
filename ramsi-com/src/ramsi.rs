@@ -9,14 +9,15 @@ mod scan;
 use core::result::Result;
 use std::{
     path::Path,
-    sync::{Arc, Mutex, Once, atomic::AtomicU32},
+    sync::{Arc, Once, atomic::AtomicU32},
 };
 
-use antimalware::{PsVersion, ScriptType};
+use antimalware::PsVersion;
+pub use antimalware::ScriptType;
 use fern::Dispatch;
 use log::{LevelFilter, debug, error};
-use ps_parser::{PowerShellSession, Variables};
 use report::PipeClient;
+pub use scan::{ScanResult, ScanStatus, Scanner};
 use shared::{PipeName, constants::RAMSI_PIPE_SUFFIX, win_log};
 use tokio::sync::RwLock;
 use windows::Win32::System::{
@@ -37,7 +38,7 @@ unsafe trait IRamsi: IAntimalwareProvider2 {}
 #[implement(IRamsi, IClassFactory)]
 
 pub struct Ramsi {
-    ps_session: Mutex<PowerShellSession>,
+    scanner: Scanner,
     process_info: ProcessInfo,
     request_number: AtomicU32,
     pipe_client: Arc<RwLock<PipeClient>>,
@@ -73,7 +74,7 @@ impl Ramsi {
         };
 
         Self {
-            ps_session: Mutex::new(PowerShellSession::new().with_variables(Variables::env())),
+            scanner: Scanner::default(),
             process_info,
             request_number: AtomicU32::new(0),
             pipe_client: Arc::new(RwLock::new(PipeClient::new(&pipe_name))),

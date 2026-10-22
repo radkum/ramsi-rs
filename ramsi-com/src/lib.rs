@@ -7,6 +7,7 @@ mod winapi;
 
 use amsi_utils as utils;
 use ramsi::{Ramsi, Ramsi_Impl};
+pub use ramsi::{ScanResult, ScanStatus, Scanner, ScriptType};
 use shared::{PipeName, constants::RAMSI_PIPE_SUFFIX, ffi_string::FfiString};
 use windows::Win32::{Foundation::HMODULE, System::LibraryLoader::DisableThreadLibraryCalls};
 type Dword = u32;
