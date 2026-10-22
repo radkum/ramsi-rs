@@ -1,7 +1,7 @@
 pub mod constants;
 pub mod debug_macros;
 pub mod ffi_string;
-pub use ffi_string::{FfiString, PipeName};
+pub use ffi_string::PipeName;
 use serde::{Deserialize, Serialize};
 
 pub type DynError = Box<dyn std::error::Error>;

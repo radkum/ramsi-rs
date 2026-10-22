@@ -1,6 +1,5 @@
 use anyhow::anyhow;
 use log::debug;
-use shared::FfiString;
 use windows::Win32::{
     Foundation::{FARPROC, FreeLibrary, GetLastError, HMODULE},
     System::{
@@ -8,13 +7,13 @@ use windows::Win32::{
         Ole::{OleInitialize, OleUninitialize},
     },
 };
-use windows_core::PCSTR;
+use windows_core::{HSTRING, PCSTR, PCWSTR};
 
 type DynError = Box<dyn std::error::Error>;
 
 pub struct RamsiComWrapper(ComWrapper);
 impl RamsiComWrapper {
-    pub fn new(com_name: &str, pipe: FfiString) -> Result<Self, DynError> {
+    pub fn new(com_name: &str, pipe: &str) -> Result<Self, DynError> {
         let com_wrapper = ComWrapper::new(com_name)?;
         com_wrapper.register(pipe)?;
         Ok(Self(com_wrapper))
@@ -43,12 +42,13 @@ impl ComWrapper {
         Ok(Self(DllWrapper::new(com_name)?))
     }
 
-    pub fn register(&self, pipe_suffix: FfiString) -> Result<(), DynError> {
+    pub fn register(&self, pipe_suffix: &str) -> Result<(), DynError> {
         let fn_reg_opt = self
             .0
             .load_fn_with_param(Self::DLL_REGISTER_SERVER_WITH_PIPE);
         let fn_reg = fn_reg_opt.ok_or(last_error("Failed to load DLL_REGISTER_SERVER fn"))?;
-        let res = unsafe { fn_reg(pipe_suffix) };
+        let pipe_suffix = HSTRING::from(pipe_suffix);
+        let res = unsafe { fn_reg(PCWSTR(pipe_suffix.as_ptr())) };
         if res != 0 {
             return Err(last_error("DllRegisterServer failed"));
         }
@@ -94,7 +94,7 @@ impl DllWrapper {
     pub fn load_fn_with_param(
         &self,
         proc_name: &str,
-    ) -> Option<unsafe extern "system" fn(FfiString) -> isize> {
+    ) -> Option<unsafe extern "system" fn(PCWSTR) -> i32> {
         let module = self.0;
         if module.is_invalid() {
             None
@@ -105,7 +105,7 @@ impl DllWrapper {
                     // Convert the raw pointer to the desired function type
                     std::mem::transmute::<
                         unsafe extern "system" fn() -> isize,
-                        unsafe extern "system" fn(FfiString) -> isize,
+                        unsafe extern "system" fn(PCWSTR) -> i32,
                     >(ptr)
                 })
             }

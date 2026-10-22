@@ -10,7 +10,7 @@ use std::{
 };
 
 use com_wrapper::{ComWrapper, RamsiComWrapper};
-use shared::{FfiString, PipeName, RamsiMessage, constants::RAMSI_PIPE_SUFFIX};
+use shared::{PipeName, RamsiMessage, constants::RAMSI_PIPE_SUFFIX};
 use tokio::{runtime::Runtime, time::timeout};
 
 use crate::pipe_server::PipeError;
@@ -43,7 +43,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let pipe_name = PipeName::from_suffix(pipe_suffix);
     pipe_name.verify()?;
-    let pipe_suffix_ffi = FfiString::new(pipe_suffix);
 
     log::trace!("Main start");
 
@@ -51,14 +50,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     match command {
         "-r" | "--register" => {
             let com_wrapper = ComWrapper::new(ramsi_path)?;
-            com_wrapper.register(pipe_suffix_ffi)?;
+            com_wrapper.register(pipe_suffix)?;
         },
         "-u" | "--unregister" => {
             let com_wrapper = ComWrapper::new(ramsi_path)?;
             com_wrapper.unregister()?;
         },
         "-a" | "--all" => {
-            let _ramsi_wrapper = RamsiComWrapper::new(ramsi_path, pipe_suffix_ffi)?;
+            let _ramsi_wrapper = RamsiComWrapper::new(ramsi_path, pipe_suffix)?;
             let rt = Runtime::new()?;
             rt.block_on(trace_amsi_events(pipe_name.as_str()))?;
         },

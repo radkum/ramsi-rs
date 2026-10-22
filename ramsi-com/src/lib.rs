@@ -8,7 +8,7 @@ mod winapi;
 use amsi_utils as utils;
 use ramsi::{Ramsi, Ramsi_Impl};
 pub use ramsi::{ScanResult, ScanStatus, Scanner, ScriptType};
-use shared::{PipeName, constants::RAMSI_PIPE_SUFFIX, ffi_string::FfiString};
+use shared::{PipeName, constants::RAMSI_PIPE_SUFFIX};
 use windows::Win32::{Foundation::HMODULE, System::LibraryLoader::DisableThreadLibraryCalls};
 type Dword = u32;
 type Lpvoid = *mut core::ffi::c_void;
@@ -23,7 +23,7 @@ pub const DLL_THREAD_DETACH: u32 = 3u32;
 
 use std::path::Path;
 
-use windows_core::GUID;
+use windows_core::{GUID, PCWSTR};
 use winreg::{RegKey, enums::*};
 
 static mut MODULE_NAME: Option<String> = None;
@@ -82,10 +82,14 @@ pub extern "system" fn DllCanUnloadNow() -> HResult {
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn DllRegisterServerWithPipe(pipe_suffix: FfiString) -> HResult {
+pub extern "system" fn DllRegisterServerWithPipe(pipe_suffix: PCWSTR) -> HResult {
     //set pipe name to registry
     dprintln!("DllRegisterServerWithPipe");
-    if let Err(err) = imp_register_server(pipe_suffix.into_string()) {
+    let pipe_suffix = (!pipe_suffix.is_null())
+        .then(|| unsafe { pipe_suffix.to_string() }.ok())
+        .flatten()
+        .filter(|s| !s.is_empty());
+    if let Err(err) = imp_register_server(pipe_suffix) {
         win_log!("{err:?}");
         return -1;
     }

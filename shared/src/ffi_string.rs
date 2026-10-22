@@ -1,32 +1,3 @@
-#[repr(C)]
-pub struct FfiString(*mut u8, usize);
-
-impl FfiString {
-    pub fn new(s: &str) -> Self {
-        let cstr = std::ffi::CString::new(s).unwrap();
-        let ptr = cstr.into_raw();
-        Self(ptr as *mut u8, s.len())
-    }
-
-    pub fn into_string(self) -> Option<String> {
-        if self.0.is_null() || self.1 == 0 {
-            return None;
-        }
-        unsafe {
-            let slice = std::slice::from_raw_parts(self.0, self.1);
-            Some(String::from_utf8_lossy(slice).to_string())
-        }
-    }
-}
-
-impl Drop for FfiString {
-    fn drop(&mut self) {
-        unsafe {
-            let _ = std::ffi::CString::from_raw(self.0 as *mut i8);
-        }
-    }
-}
-
 pub struct PipeName(String);
 impl PipeName {
     pub fn from_suffix(suffix: &str) -> Self {
