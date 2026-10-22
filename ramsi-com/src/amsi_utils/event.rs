@@ -1,6 +1,9 @@
 mod process_info;
 
-use std::{fmt, fs, path::PathBuf};
+use std::{
+    fmt, fs,
+    path::{Path, PathBuf},
+};
 
 pub(crate) use process_info::ProcessInfo;
 
@@ -16,16 +19,10 @@ pub struct RamsiEvent {
 }
 
 impl RamsiEvent {
-    #[allow(dead_code)]
-    pub fn dump(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let dir = "C:\\ramsi";
-        if !fs::exists(dir).unwrap_or_default() {
-            fs::create_dir(dir)?;
-        }
-
+    pub fn dump(&self, dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
         let file_name = format!(
             "{}\\{}_{}_{}_{}",
-            dir,
+            dir.display(),
             self.process_info.pid(),
             self.process_info.tid(),
             self.request_number,

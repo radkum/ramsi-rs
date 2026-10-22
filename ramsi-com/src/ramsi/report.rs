@@ -30,9 +30,11 @@ impl Ramsi_Impl {
 
         debug!("{}", amsi_event);
 
-        // only for debug purpose
-        #[cfg(debug_assertions)]
-        let _ = amsi_event.dump();
+        if self.config.dump
+            && let Err(err) = amsi_event.dump(&self.config.log_dir)
+        {
+            error!("Failed to dump event: {err}");
+        }
 
         if let Some(runtime) = &*RUNTIME {
             runtime.block_on(async {
