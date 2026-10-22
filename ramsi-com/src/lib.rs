@@ -178,6 +178,11 @@ fn imp_unregister_server() -> Result<(), Box<dyn std::error::Error>> {
     let CLSID_path = format!("Software\\Classes\\CLSID\\{}", Ramsi::IID());
     hklm.delete_subkey_all(CLSID_path)?;
 
+    // written by register, a temporary pipe must not outlive the registration
+    if let Ok(key) = hklm.open_subkey_with_flags(CONFIG_KEY, KEY_SET_VALUE) {
+        let _ = key.delete_value(config_value::PIPE);
+    }
+
     win_log!("DllUnregisterServer end");
     Ok(())
 }
