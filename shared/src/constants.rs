@@ -2,6 +2,10 @@ pub const RAMSI_PIPE_SUFFIX: &str = r"ramsi";
 pub const RAMSI_CLSID: &str = "{b8614e83-84ac-45fb-82a8-21711aaf07f2}";
 pub const CONFIG_KEY: &str = r"SOFTWARE\Ramsi";
 pub const DEFAULT_LOG_DIR: &str = r"C:\ProgramData\ramsi";
+// SYSTEM and admins: full; users: create files they own, not read others' logs
+// and dumps
+pub const LOG_DIR_SDDL: &str =
+    "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;;0x1000a2;;;AU)(A;OICIIO;FA;;;CO)";
 
 // value names under CONFIG_KEY
 pub mod config_value {

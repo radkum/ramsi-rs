@@ -2,7 +2,9 @@ use std::path::{Path, PathBuf};
 
 use shared::{
     DynResult, PipeName,
-    constants::{CONFIG_KEY, DEFAULT_LOG_DIR, RAMSI_CLSID, RAMSI_PIPE_SUFFIX, config_value::*},
+    constants::{
+        CONFIG_KEY, DEFAULT_LOG_DIR, LOG_DIR_SDDL, RAMSI_CLSID, RAMSI_PIPE_SUFFIX, config_value::*,
+    },
 };
 use windows::Win32::{
     Foundation::{HLOCAL, LocalFree},
@@ -18,11 +20,6 @@ use windows::Win32::{
 };
 use windows_core::{BOOL, HSTRING};
 use winreg::{RegKey, RegValue, enums::*};
-
-// SYSTEM and admins: full; users: create files they own, not read others' logs
-// and dumps
-const LOG_DIR_SDDL: &str =
-    "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;;0x1000a2;;;AU)(A;OICIIO;FA;;;CO)";
 
 enum Kind {
     Text,
