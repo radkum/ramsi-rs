@@ -28,5 +28,6 @@ features = [
     "Win32_System_Diagnostics_Debug",
     "Win32_System_Ole",
     "Win32_System_Pipes",
+    "Win32_Security",
     "Win32_Security_Authorization",
 ]
