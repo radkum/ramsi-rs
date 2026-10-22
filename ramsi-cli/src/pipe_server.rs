@@ -2,6 +2,7 @@ use std::{ffi::CString, mem::zeroed, time::Duration};
 
 use serde::de::DeserializeOwned;
 use serde_json::from_slice;
+use shared::constants::MAX_MESSAGE_LEN;
 use thiserror::Error;
 use tokio::{
     io::AsyncReadExt,
@@ -50,8 +51,6 @@ pub async fn message<M: DeserializeOwned>(
     Ok(read::<M, _>(pipe, BODY_TIMEOUT).await?)
 }
 
-// any local process may write to the pipe, so the length is not trusted
-const MAX_MESSAGE_LEN: u64 = 16 * 1024 * 1024;
 // once the length arrived, the rest of the message must follow within this time
 const BODY_TIMEOUT: Duration = Duration::from_secs(5);
 

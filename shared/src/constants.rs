@@ -1,4 +1,8 @@
 pub const RAMSI_PIPE_SUFFIX: &str = r"ramsi";
+// any local process may write to the pipe, so the trace server caps a message
+pub const MAX_MESSAGE_LEN: u64 = 16 * 1024 * 1024;
+// JSON escaping grows content up to 6x, so an event stays under MAX_MESSAGE_LEN
+pub const MAX_CONTENT_LIMIT: u32 = 2 * 1024 * 1024;
 pub const RAMSI_CLSID: &str = "{b8614e83-84ac-45fb-82a8-21711aaf07f2}";
 pub const CONFIG_KEY: &str = r"SOFTWARE\Ramsi";
 pub const DEFAULT_LOG_DIR: &str = r"C:\ProgramData\ramsi";
