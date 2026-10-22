@@ -28,7 +28,7 @@ use winreg::{RegKey, enums::*};
 static mut MODULE_NAME: Option<String> = None;
 
 #[unsafe(no_mangle)]
-pub extern "system" fn DllMain(module: HMODULE, reason: Dword, _: Lpvoid) -> bool {
+pub extern "system" fn DllMain(module: HMODULE, reason: Dword, reserved: Lpvoid) -> bool {
     match reason {
         DLL_PROCESS_ATTACH => {
             win_log!("DLL_PROCESS_ATTACH");
@@ -40,6 +40,8 @@ pub extern "system" fn DllMain(module: HMODULE, reason: Dword, _: Lpvoid) -> boo
                 }
             }
         },
+        // process exit: other threads are gone and teardown under the loader lock may hang
+        DLL_PROCESS_DETACH if !reserved.is_null() => win_log!("DLL_PROCESS_DETACH (process exit)"),
         DLL_PROCESS_DETACH => {
             win_log!("DLL_PROCESS_DETACH");
             let result = Ramsi_Impl::terminate();
