@@ -184,7 +184,8 @@ mod tests {
                     Pipes::WaitNamedPipeW,
                     Threading::{
                         CREATE_NO_WINDOW, CreateProcessAsUserW, GetCurrentProcess,
-                        OpenProcessToken, PROCESS_INFORMATION, STARTUPINFOW, TerminateProcess,
+                        GetExitCodeProcess, OpenProcessToken, PROCESS_INFORMATION, STARTUPINFOW,
+                        TerminateProcess,
                     },
                 },
             },
@@ -254,12 +255,15 @@ mod tests {
             let res = client.connect();
             (res, client.active())
         });
+        let mut exit_code = 0;
         unsafe {
+            let _ = GetExitCodeProcess(process, &mut exit_code);
             let _ = TerminateProcess(process, 1);
             let _ = CloseHandle(process);
         }
 
-        let (res, active) = res.expect("pipe server did not start");
+        let (res, active) =
+            res.unwrap_or_else(|| panic!("pipe server did not start, exit code 0x{exit_code:x}"));
         assert!(
             matches!(res, Err(PipeClientError::UntrustedServer(_))),
             "{res:?}"
