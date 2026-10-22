@@ -54,7 +54,9 @@ impl Ramsi_Impl {
                 );
                 return String::new();
             }
-            AmsiString::from(buf).into()
+            // string attributes are NUL-terminated
+            let s: String = AmsiString::from(buf).into();
+            s.split('\0').next().unwrap_or_default().to_string()
         }
     }
 
@@ -125,6 +127,18 @@ mod tests {
             data: *mut u8,
             retdata: *mut u32,
         ) -> windows_core::Result<()> {
+            if attribute == AMSI_ATTRIBUTE_APP_NAME {
+                let name: Vec<u8> = "PowerShell_test\0"
+                    .encode_utf16()
+                    .flat_map(u16::to_le_bytes)
+                    .collect();
+                unsafe { *retdata = name.len() as u32 };
+                if (datasize as usize) < name.len() {
+                    return Err(windows_core::HRESULT(E_NOT_SUFFICIENT_BUFFER).into());
+                }
+                unsafe { std::ptr::copy_nonoverlapping(name.as_ptr(), data, name.len()) };
+                return Ok(());
+            }
             let value: u64 = match attribute {
                 AMSI_ATTRIBUTE_CONTENT_SIZE => self.content.len() as u64,
                 AMSI_ATTRIBUTE_CONTENT_ADDRESS if self.in_memory => self.content.as_ptr() as u64,
@@ -174,6 +188,22 @@ mod tests {
         assert_eq!(
             Ramsi_Impl::get_content(&stream("Get-Process", false)),
             "Get-Process"
+        );
+    }
+
+    #[test]
+    fn content_is_not_cut_at_nul() {
+        assert_eq!(
+            Ramsi_Impl::get_content(&stream("#\0iex payload", true)),
+            "#\0iex payload"
+        );
+    }
+
+    #[test]
+    fn string_attribute_drops_nul_terminator() {
+        assert_eq!(
+            Ramsi_Impl::string_attribute(&stream("", true), AMSI_ATTRIBUTE_APP_NAME),
+            "PowerShell_test"
         );
     }
 }
