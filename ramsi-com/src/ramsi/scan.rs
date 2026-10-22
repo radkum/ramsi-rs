@@ -237,7 +237,7 @@ impl Scanner {
         let mut commands_and_methods = tokens
             .methods_and_commands()
             .iter()
-            .map(|s| s.to_string())
+            .map(|s| s.to_ascii_lowercase())
             .collect::<BTreeSet<_>>();
         let ttypes = tokens
             .ttypes()
@@ -330,7 +330,7 @@ impl Scanner {
                         cs_tokens
                             .methods()
                             .iter()
-                            .map(|m| m.name().to_string())
+                            .map(|m| m.name().to_ascii_lowercase())
                             .collect::<BTreeSet<_>>(),
                     );
 
@@ -338,7 +338,7 @@ impl Scanner {
                         cs_tokens
                             .function_declarations()
                             .iter()
-                            .map(|m| m.name().to_string())
+                            .map(|m| m.name().to_ascii_lowercase())
                             .collect::<BTreeSet<_>>(),
                     );
                 },
@@ -400,6 +400,16 @@ mod tests {
         assert_eq!(result.status, ScanStatus::Detected);
         let result = scanner.scan("Get-Date", ScriptType::PsCommand);
         assert_eq!(result.status, ScanStatus::Clean);
+    }
+
+    fn status(script: &str) -> ScanStatus {
+        Scanner::default().scan(script, ScriptType::PsScript).status
+    }
+
+    #[test]
+    fn commands_match_case_insensitively() {
+        assert_eq!(status("AmsiInitialize 1"), ScanStatus::Detected);
+        assert_eq!(status("Add-Type -AssemblyName x"), ScanStatus::Suspicious);
     }
 
     #[test]
