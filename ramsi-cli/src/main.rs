@@ -1,4 +1,5 @@
 mod com_wrapper;
+mod config;
 mod pipe_server;
 
 use std::{
@@ -9,8 +10,9 @@ use std::{
     time::Duration,
 };
 
+use clap::{Parser, Subcommand};
 use com_wrapper::{ComWrapper, RamsiComWrapper};
-use shared::{PipeName, ScanEvent, constants::RAMSI_PIPE_SUFFIX};
+use shared::{PipeName, ScanEvent};
 use tokio::{runtime::Runtime, time::timeout};
 
 use crate::pipe_server::PipeError;
@@ -19,75 +21,148 @@ const RAMSI_COM_DLL: &str = "ramsi_com.dll";
 
 static CONTROL_C: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(false));
 
+#[derive(Parser)]
+#[command(about = "Manage the Ramsi AMSI provider and trace its events")]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Register the provider DLL as an AMSI provider
+    Register {
+        #[arg(long, default_value = RAMSI_COM_DLL)]
+        dll: String,
+        /// Pipe name suffix (\\.\pipe\<SUFFIX>) the provider reports to
+        #[arg(long, value_name = "SUFFIX")]
+        pipe: Option<String>,
+    },
+    /// Unregister the provider DLL
+    Unregister {
+        #[arg(long, default_value = RAMSI_COM_DLL)]
+        dll: String,
+    },
+    /// Print events reported by the provider until Ctrl+C
+    Trace {
+        /// Pipe name suffix, the configured one by default
+        #[arg(long, value_name = "SUFFIX")]
+        pipe: Option<String>,
+        /// Register the DLL for the time of tracing
+        #[arg(long)]
+        register: bool,
+        #[arg(long, default_value = RAMSI_COM_DLL)]
+        dll: String,
+        /// Print events as JSON lines
+        #[arg(long)]
+        json: bool,
+        /// Print only events containing TEXT (case-insensitive)
+        #[arg(long, value_name = "TEXT")]
+        filter: Option<String>,
+    },
+    /// Show registration and configuration
+    Status,
+    /// Show or change the configuration in HKLM\SOFTWARE\Ramsi
+    #[command(subcommand)]
+    Config(ConfigCommand),
+}
+
+#[derive(Subcommand)]
+enum ConfigCommand {
+    Show,
+    Set { name: String, value: String },
+    Unset { name: String },
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    env_logger::Builder::new()
-        .filter_level(log::LevelFilter::max())
-        .init();
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() < 2 {
-        println!("No arguments provided.");
-        print_help();
-        return Ok(());
-    }
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    let ramsi_path = if args.len() > 2 {
-        args[2].as_str()
-    } else {
-        RAMSI_COM_DLL
-    };
-
-    let pipe_suffix = if args.len() > 3 {
-        args[3].as_str()
-    } else {
-        RAMSI_PIPE_SUFFIX
-    };
-    let pipe_name = PipeName::from_suffix(pipe_suffix);
-    pipe_name.verify()?;
-
-    log::trace!("Main start");
-
-    let command = args[1].as_str();
-    match command {
-        "-r" | "--register" => {
-            let com_wrapper = ComWrapper::new(ramsi_path)?;
-            com_wrapper.register(pipe_suffix)?;
+    match Cli::parse().command {
+        Command::Register { dll, pipe } => {
+            let pipe = pipe_suffix(pipe)?;
+            ComWrapper::new(&dll)?.register(&pipe)?;
         },
-        "-u" | "--unregister" => {
-            let com_wrapper = ComWrapper::new(ramsi_path)?;
-            com_wrapper.unregister()?;
+        Command::Unregister { dll } => {
+            ComWrapper::new(&dll)?.unregister()?;
         },
-        "-a" | "--all" => {
-            let _ramsi_wrapper = RamsiComWrapper::new(ramsi_path, pipe_suffix)?;
+        Command::Trace {
+            pipe,
+            register,
+            dll,
+            json,
+            filter,
+        } => {
+            let pipe = pipe_suffix(pipe)?;
+            let _ramsi_wrapper = register
+                .then(|| RamsiComWrapper::new(&dll, &pipe))
+                .transpose()?;
+            let output = Output {
+                json,
+                filter: filter.map(|f| f.to_lowercase()),
+            };
             let rt = Runtime::new()?;
-            rt.block_on(trace_amsi_events(pipe_name.as_str()))?;
+            rt.block_on(trace_amsi_events(
+                PipeName::from_suffix(&pipe).as_str(),
+                output,
+            ))?;
         },
-        "-t" | "--trace" => {
-            let rt = Runtime::new()?;
-            rt.block_on(trace_amsi_events(pipe_name.as_str()))?;
-        },
-        "-h" | "--help" => {
-            print_help();
-        },
-        _ => {
-            println!("Unknown command: {}", command);
-            print_help();
-        },
+        Command::Status => config::status()?,
+        Command::Config(ConfigCommand::Show) => config::show()?,
+        Command::Config(ConfigCommand::Set { name, value }) => config::set(&name, &value)?,
+        Command::Config(ConfigCommand::Unset { name }) => config::unset(&name)?,
     }
 
     log::debug!("Main finished");
     Ok(())
 }
 
-async fn trace_amsi_events(pipe_name: &str) -> Result<(), Box<dyn std::error::Error>> {
+// an explicit suffix wins over the configured one
+fn pipe_suffix(pipe: Option<String>) -> Result<String, Box<dyn std::error::Error>> {
+    let pipe = pipe.unwrap_or_else(config::pipe_suffix);
+    PipeName::from_suffix(&pipe).verify()?;
+    Ok(pipe)
+}
+
+#[derive(Clone)]
+struct Output {
+    json: bool,
+    filter: Option<String>,
+}
+
+impl Output {
+    fn print(&self, event: &ScanEvent) {
+        let line = event.to_string();
+        if let Some(filter) = &self.filter
+            && !line.to_lowercase().contains(filter)
+            && !event.content.to_lowercase().contains(filter)
+        {
+            return;
+        }
+        if self.json {
+            match serde_json::to_string(event) {
+                Ok(json) => println!("{json}"),
+                Err(err) => log::error!("{err}"),
+            }
+        } else {
+            println!("{line}");
+        }
+    }
+}
+
+async fn trace_amsi_events(
+    pipe_name: &str,
+    output: Output,
+) -> Result<(), Box<dyn std::error::Error>> {
     tokio::spawn(async move {
         ctrlc::set_handler(move || {
-            println!("received Ctrl+C!");
+            eprintln!("received Ctrl+C!");
             CONTROL_C.store(true, Ordering::Release);
         })
         .expect("Error setting Ctrl-C handler");
     });
 
     let mut server = pipe_server::create_first_server(pipe_name)?;
+    log::info!("Tracing events on {pipe_name}");
 
     loop {
         {
@@ -112,6 +187,7 @@ async fn trace_amsi_events(pipe_name: &str) -> Result<(), Box<dyn std::error::Er
         // `io::ErrorKind::NotFound`.
         server = pipe_server::create_server(pipe_name)?;
 
+        let output = output.clone();
         let _client = tokio::spawn(async move {
             loop {
                 {
@@ -122,9 +198,7 @@ async fn trace_amsi_events(pipe_name: &str) -> Result<(), Box<dyn std::error::Er
                 }
 
                 match pipe_server::message::<ScanEvent>(&mut connected_client, 1000).await {
-                    Ok(input_message) => {
-                        println!("{}", input_message);
-                    },
+                    Ok(event) => output.print(&event),
                     Err(err) => match err {
                         PipeError::Timeout => { /* to noisy */ },
                         PipeError::UnexpectedEof => break,
@@ -136,13 +210,4 @@ async fn trace_amsi_events(pipe_name: &str) -> Result<(), Box<dyn std::error::Er
     }
 
     Ok(())
-}
-
-fn print_help() {
-    println!("Usage: ramsi-cli [OPTION]");
-    println!("Options:");
-    println!("  -r, --register       Register the COM component");
-    println!("  -u, --unregister     Unregister the COM component");
-    println!("  -a, --all            Register the COM component and trace AMSI events");
-    println!("  -t, --trace          Trace AMSI events");
 }

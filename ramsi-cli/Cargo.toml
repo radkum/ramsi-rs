@@ -15,6 +15,8 @@ tokio = { workspace = true, features = [ "full" ] }
 env_logger = "0.11.8"
 ctrlc = "3.4.7"
 windows-core = {workspace = true}
+clap = { version = "4.6.7", features = ["derive"] }
+winreg = "0.55.0"
 
 [dependencies.windows]
 workspace = true

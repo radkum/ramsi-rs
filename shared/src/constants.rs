@@ -1,4 +1,5 @@
 pub const RAMSI_PIPE_SUFFIX: &str = r"ramsi";
+pub const RAMSI_CLSID: &str = "{b8614e83-84ac-45fb-82a8-21711aaf07f2}";
 pub const CONFIG_KEY: &str = r"SOFTWARE\Ramsi";
 pub const DEFAULT_LOG_DIR: &str = r"C:\ProgramData\ramsi";
 
