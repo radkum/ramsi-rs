@@ -1,13 +1,17 @@
 #![allow(non_snake_case)]
 
 mod amsi_utils;
+mod config;
 mod ramsi;
 mod winapi;
 
 use amsi_utils as utils;
 use ramsi::{Ramsi, Ramsi_Impl};
 pub use ramsi::{ScanResult, ScanStatus, Scanner, ScriptType};
-use shared::{PipeName, constants::RAMSI_PIPE_SUFFIX};
+use shared::{
+    PipeName,
+    constants::{CONFIG_KEY, RAMSI_PIPE_SUFFIX, config_value},
+};
 use windows::Win32::{Foundation::HMODULE, System::LibraryLoader::DisableThreadLibraryCalls};
 type Dword = u32;
 type Lpvoid = *mut core::ffi::c_void;
@@ -118,7 +122,9 @@ fn imp_register_server(pipe_suffix: Option<String>) -> Result<(), Box<dyn std::e
         REG_OPENED_EXISTING_KEY => win_log!("An existing key has been opened"),
     }
     key.set_value("", &Ramsi::NAME)?;
-    key.set_value("pipe", &pipe_name.suffix())?;
+
+    let (key, _) = hklm.create_subkey(CONFIG_KEY)?;
+    key.set_value(config_value::PIPE, &pipe_name.suffix())?;
 
     // set InProcServer32
     let inproc_path = uuid_path.join("InProcServer32");

@@ -7,10 +7,7 @@ mod report;
 mod scan;
 
 use core::result::Result;
-use std::{
-    path::Path,
-    sync::{Arc, OnceLock, atomic::AtomicU32},
-};
+use std::sync::{Arc, OnceLock, atomic::AtomicU32};
 
 use antimalware::PsVersion;
 pub use antimalware::ScriptType;
@@ -18,16 +15,15 @@ use fern::Dispatch;
 use log::{LevelFilter, debug, error};
 use report::PipeClient;
 pub use scan::{ScanResult, ScanStatus, Scanner};
-use shared::{PipeName, constants::RAMSI_PIPE_SUFFIX, win_log};
+use shared::win_log;
 use tokio::sync::RwLock;
 use windows::Win32::System::{
     Antimalware::*,
     Com::{IClassFactory, IClassFactory_Impl},
 };
 use windows_core::*;
-use winreg::{RegKey, enums::*};
 
-use crate::utils::ProcessInfo;
+use crate::{config::Config, utils::ProcessInfo};
 // created lazily: heavy init is not allowed under the loader lock in DllMain
 static CLASS_FACTORY: OnceLock<StaticComObject<Ramsi>> = OnceLock::new();
 
@@ -41,51 +37,34 @@ pub struct Ramsi {
     process_info: ProcessInfo,
     request_number: AtomicU32,
     pipe_client: Arc<RwLock<PipeClient>>,
+    config: Config,
 }
 
 impl Ramsi {
-    fn get_pipe_name() -> Result<String, Box<dyn std::error::Error>> {
-        let hkcu = RegKey::predef(HKEY_LOCAL_MACHINE);
-        let uuid_path_string = format!("Software\\Classes\\CLSID\\{}", Ramsi::IID());
-        let uuid_path = Path::new(uuid_path_string.as_str());
-        let key = hkcu.open_subkey(uuid_path)?;
-        let pipe_suffix: String = key.get_value("pipe")?;
-        let pipe_name = PipeName::from_suffix(&pipe_suffix);
-
-        pipe_name.verify()?;
-        Ok(pipe_name.to_string())
-    }
-
     pub fn new() -> Self {
+        // read once, when the DLL creates its class factory
+        let config = Config::load();
         let process_info = ProcessInfo::current();
 
-        if let Err(err) = Self::init_logging(LevelFilter::Info, &process_info) {
+        if let Err(err) = Self::init_logging(&config, &process_info) {
             error!("Failed to initialize logging: {err}");
         }
-
-        //read pipe name from registry
-        let pipe_name = match Self::get_pipe_name() {
-            Ok(name) => name,
-            Err(err) => {
-                error!("Failed to get pipe name: {err}");
-                format!(r"\\.\pipe\{}", RAMSI_PIPE_SUFFIX)
-            },
-        };
 
         Self {
             scanner: Scanner::default(),
             process_info,
             request_number: AtomicU32::new(0),
-            pipe_client: Arc::new(RwLock::new(PipeClient::new(&pipe_name))),
+            pipe_client: Arc::new(RwLock::new(PipeClient::new(&config.pipe_name))),
+            config,
         }
     }
 
     fn init_logging(
-        log_level: LevelFilter,
+        config: &Config,
         process_info: &ProcessInfo,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let base = format!("amsi-{}-{}", process_info.pid(), process_info.tid());
-        let log_dir = "C:\\ramsi";
+        let log_dir = &config.log_dir;
         std::fs::create_dir_all(log_dir)?;
 
         let mut logger = Dispatch::new().format(|out, message, record| {
@@ -102,7 +81,7 @@ impl Ramsi {
         logger = logger.chain(
             Dispatch::new()
                 .level(LevelFilter::Off)
-                .level_for(env!("CARGO_CRATE_NAME"), log_level)
+                .level_for(env!("CARGO_CRATE_NAME"), config.log_level)
                 .chain(fern::DateBased::new(
                     log_dir,
                     format!("/{base}-%Y-%m-%d.log"),
