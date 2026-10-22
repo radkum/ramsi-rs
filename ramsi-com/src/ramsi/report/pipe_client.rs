@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use serde::Serialize;
 use serde_json::to_vec;
 use thiserror::Error;
@@ -20,6 +22,9 @@ pub enum PipeClientError {
 
     #[error("Pipe not active")]
     NotActive,
+
+    #[error("Reconnect postponed after a timeout")]
+    Backoff,
 }
 pub type PipeClientResult<T> = Result<T, PipeClientError>;
 
@@ -39,11 +44,14 @@ impl From<time::error::Elapsed> for PipeClientError {
     }
 }
 
-const SEND_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
+const SEND_TIMEOUT: Duration = Duration::from_millis(500);
+// a stalled server would otherwise cost SEND_TIMEOUT on every scan
+const RECONNECT_BACKOFF: Duration = Duration::from_secs(30);
 
 pub struct PipeClient {
     pub pipe: Option<NamedPipeClient>,
     pub pipe_name: String,
+    retry_at: Option<Instant>,
 }
 
 impl PipeClient {
@@ -51,10 +59,14 @@ impl PipeClient {
         Self {
             pipe: None,
             pipe_name: pipe_name.to_string(),
+            retry_at: None,
         }
     }
 
     pub fn connect(&mut self) -> PipeClientResult<()> {
+        if self.retry_at.is_some_and(|t| Instant::now() < t) {
+            return Err(PipeClientError::Backoff);
+        }
         self.pipe = Some(
             ClientOptions::new()
                 .open(&self.pipe_name)
@@ -76,6 +88,9 @@ impl PipeClient {
             if !matches!(res, Ok(Ok(()))) {
                 // broken or stalled pipe, reconnect on next send
                 self.pipe = None;
+            }
+            if res.is_err() {
+                self.retry_at = Some(Instant::now() + RECONNECT_BACKOFF);
             }
             res??;
             Ok(())
@@ -128,6 +143,7 @@ mod tests {
 
         assert!(matches!(res, Err(PipeClientError::Timeout)), "{res:?}");
         assert!(!client.active());
+        assert!(matches!(client.connect(), Err(PipeClientError::Backoff)));
     }
 
     #[tokio::test]
@@ -140,5 +156,18 @@ mod tests {
 
         assert!(send_until_error(&mut client).await.is_err());
         assert!(!client.active());
+    }
+
+    #[tokio::test]
+    async fn reconnects_without_backoff_after_broken_pipe() {
+        let name = pipe_name("broken");
+        let server = ServerOptions::new().create(&name).unwrap();
+        let mut client = PipeClient::new(&name);
+        client.connect().unwrap();
+        drop(server);
+        assert!(send_until_error(&mut client).await.is_err());
+
+        let _server = ServerOptions::new().create(&name).unwrap();
+        client.connect().unwrap();
     }
 }
