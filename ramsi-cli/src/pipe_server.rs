@@ -39,12 +39,6 @@ impl From<std::io::Error> for PipeError {
     }
 }
 
-impl From<tokio::time::error::Elapsed> for PipeError {
-    fn from(_elapsed: tokio::time::error::Elapsed) -> Self {
-        Self::Timeout
-    }
-}
-
 pub async fn message<M: DeserializeOwned>(
     pipe: &mut NamedPipeServer,
 ) -> core::result::Result<M, PipeError> {

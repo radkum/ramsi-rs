@@ -2,7 +2,13 @@
 
 use std::{process::Command, time::Duration};
 
-use shared::{ScanEvent, ScanStatus, constants::CONFIG_KEY};
+use shared::{
+    ScanEvent, ScanStatus,
+    constants::{
+        CONFIG_KEY,
+        config_value::{MODE, PIPE, RULES},
+    },
+};
 use tokio::{io::AsyncReadExt, net::windows::named_pipe::ServerOptions, time::timeout};
 use windows::Win32::{
     Security::{
@@ -45,8 +51,8 @@ impl Drop for Registered {
                 std::mem::transmute(GetProcAddress(self.0, s!("DllUnregisterServer")).unwrap());
             unregister();
         }
-        let _ = config().delete_value("mode");
-        let _ = config().delete_value("rules");
+        let _ = config().delete_value(MODE);
+        let _ = config().delete_value(RULES);
         let _ = std::fs::remove_file(rules_path());
     }
 }
@@ -123,14 +129,14 @@ async fn powershell_is_blocked_and_reported() {
             .unwrap()
     };
     let registered = Registered::new(&suffix);
-    config().set_value("mode", &"block").unwrap();
+    config().set_value(MODE, &"block").unwrap();
     // a keyword only ramsi knows, other providers may block first
     write_admin_file(
         &rules_path(),
         &format!("blacklist_keywords = [\"{MARKER}\"]"),
     );
     config()
-        .set_value("rules", &rules_path().display().to_string())
+        .set_value(RULES, &rules_path().display().to_string())
         .unwrap();
 
     let output = Command::new("powershell.exe")
@@ -169,7 +175,7 @@ async fn powershell_is_blocked_and_reported() {
 
     drop(registered);
     assert!(
-        config().get_raw_value("pipe").is_err(),
+        config().get_raw_value(PIPE).is_err(),
         "unregister left the pipe"
     );
 }
