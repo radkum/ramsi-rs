@@ -48,11 +48,20 @@ pub async fn message<M: DeserializeOwned>(
     Ok(read::<M, _>(pipe, time).await?)
 }
 
+// any local process may write to the pipe, so the length is not trusted
+const MAX_MESSAGE_LEN: u64 = 16 * 1024 * 1024;
+
 pub async fn read<M: DeserializeOwned, R: AsyncReadExt + std::marker::Unpin>(
     pipe: &mut R,
     time: u64,
 ) -> std::io::Result<M> {
     let message_length = timeout(Duration::from_millis(time), pipe.read_u64()).await??;
+    if message_length > MAX_MESSAGE_LEN {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("Message too long: {message_length} bytes"),
+        ));
+    }
     let mut buffer = vec![0u8; message_length as usize];
     pipe.read_exact(&mut buffer).await?;
     Ok(from_slice::<M>(&buffer)?)
@@ -92,5 +101,26 @@ pub fn create_writer_with_security_attrs(
         ServerOptions::new()
             .first_pipe_instance(first)
             .create_with_security_attributes_raw(pipe_name, &mut attributes as *mut _ as _)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn rejects_oversized_message_length() {
+        let mut input: &[u8] = &u64::MAX.to_be_bytes();
+        let err = read::<String, _>(&mut input, 1000).await.unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[tokio::test]
+    async fn reads_length_prefixed_json() {
+        let json = br#""hello""#;
+        let mut input = (json.len() as u64).to_be_bytes().to_vec();
+        input.extend_from_slice(json);
+        let msg: String = read(&mut input.as_slice(), 1000).await.unwrap();
+        assert_eq!(msg, "hello");
     }
 }
