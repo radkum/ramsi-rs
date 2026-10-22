@@ -8,7 +8,10 @@ use tokio::{
     net::windows::named_pipe::{NamedPipeServer, ServerOptions},
     time::timeout,
 };
-use windows::Win32::Security::SECURITY_ATTRIBUTES;
+use windows::Win32::{
+    Foundation::{HLOCAL, LocalFree},
+    Security::SECURITY_ATTRIBUTES,
+};
 use windows_core::PCSTR;
 
 #[derive(Error, Debug)]
@@ -97,16 +100,26 @@ pub fn create_writer_with_security_attrs(
         )?;
     }
 
-    unsafe {
+    let server = unsafe {
         ServerOptions::new()
             .first_pipe_instance(first)
             .create_with_security_attributes_raw(pipe_name, &mut attributes as *mut _ as _)
-    }
+    };
+    unsafe { LocalFree(Some(HLOCAL(attributes.lpSecurityDescriptor))) };
+    server
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn first_server_fails_when_pipe_exists() {
+        let name = format!(r"\\.\pipe\ramsi-cli-test-{}", std::process::id());
+        let _server = create_first_server(&name).unwrap();
+        let _next = create_server(&name).unwrap();
+        assert!(create_first_server(&name).is_err());
+    }
 
     #[tokio::test]
     async fn rejects_oversized_message_length() {
