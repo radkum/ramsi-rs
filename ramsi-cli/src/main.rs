@@ -202,7 +202,11 @@ async fn trace_amsi_events(
                     Err(err) => match err {
                         PipeError::Timeout => { /* to noisy */ },
                         PipeError::UnexpectedEof => break,
-                        PipeError::IoError(err) => log::trace!("IoErrorrr: {err}"),
+                        // the stream is out of sync, drop the client
+                        PipeError::IoError(err) => {
+                            log::warn!("Dropping client: {err}");
+                            break;
+                        },
                     },
                 }
             }
