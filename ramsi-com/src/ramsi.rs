@@ -9,7 +9,7 @@ mod scan;
 use core::result::Result;
 use std::{
     path::Path,
-    sync::{Arc, Mutex, atomic::AtomicU32},
+    sync::{Arc, Mutex, Once, atomic::AtomicU32},
 };
 
 use antimalware::{PsVersion, ScriptType};
@@ -28,6 +28,9 @@ use winreg::{RegKey, enums::*};
 
 use crate::utils::ProcessInfo;
 pub(super) static mut CLASS_FACTORY: Option<StaticComObject<Ramsi>> = None;
+// created on first DllGetClassObject, heavy init is not allowed under loader
+// lock in DllMain
+static CLASS_FACTORY_INIT: Once = Once::new();
 
 #[interface("b8614e83-84ac-45fb-82a8-21711aaf07f2")]
 unsafe trait IRamsi: IAntimalwareProvider2 {}
@@ -172,6 +175,8 @@ impl Ramsi_Impl {
             );
             return windows_core::HRESULT(-2147221231); // E_NOINTERFACE
         }
+
+        CLASS_FACTORY_INIT.call_once(Self::create);
 
         if let Err(r) = Self::query_interface(iid, interface) {
             debug!("Ramsi_Impl::get_class_object: {:?}", r);
