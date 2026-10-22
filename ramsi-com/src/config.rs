@@ -20,6 +20,9 @@ pub struct Config {
     pub mode: Mode,
     // the lowest status that is blocked in block mode
     pub block_on: ScanStatus,
+    pub report: bool,
+    // lowercase app name prefixes to scan, empty scans all
+    pub apps: Vec<String>,
     pub log_level: LevelFilter,
     pub log_dir: PathBuf,
     pub dump: bool,
@@ -31,6 +34,8 @@ impl Default for Config {
         Self {
             mode: Mode::Monitor,
             block_on: ScanStatus::Detected,
+            report: true,
+            apps: Vec::new(),
             log_level: LevelFilter::Info,
             log_dir: PathBuf::from(DEFAULT_LOG_DIR),
             dump: false,
@@ -57,6 +62,11 @@ impl Config {
             }
     }
 
+    pub fn scans_app(&self, app_name: &str) -> bool {
+        let app_name = app_name.to_ascii_lowercase();
+        self.apps.is_empty() || self.apps.iter().any(|app| app_name.starts_with(app))
+    }
+
     fn from_key(key: &RegKey) -> Self {
         let mut config = Self::default();
         match key.get_value::<String, _>(config_value::MODE).as_deref() {
@@ -69,6 +79,16 @@ impl Config {
             .as_deref()
         {
             config.block_on = ScanStatus::Suspicious;
+        }
+        if let Ok(report) = key.get_value::<u32, _>(config_value::REPORT) {
+            config.report = report != 0;
+        }
+        if let Ok(apps) = key.get_value::<String, _>(config_value::APPS) {
+            config.apps = apps
+                .split(';')
+                .map(|app| app.trim().to_ascii_lowercase())
+                .filter(|app| !app.is_empty())
+                .collect();
         }
         if let Ok(level) = key.get_value::<String, _>(config_value::LOG_LEVEL)
             && let Ok(level) = level.parse()
@@ -128,6 +148,10 @@ mod tests {
         key.1
             .set_value(config_value::BLOCK_ON, &"suspicious")
             .unwrap();
+        key.1.set_value(config_value::REPORT, &0u32).unwrap();
+        key.1
+            .set_value(config_value::APPS, &"PowerShell_; ;OtherApp")
+            .unwrap();
         key.1.set_value(config_value::LOG_LEVEL, &"debug").unwrap();
         key.1.set_value(config_value::LOG_DIR, &"D:\\logs").unwrap();
         key.1.set_value(config_value::DUMP, &1u32).unwrap();
@@ -137,6 +161,8 @@ mod tests {
 
         assert_eq!(config.mode, Mode::Block);
         assert_eq!(config.block_on, ScanStatus::Suspicious);
+        assert!(!config.report);
+        assert_eq!(config.apps, ["powershell_", "otherapp"]);
         assert_eq!(config.log_level, LevelFilter::Debug);
         assert_eq!(config.log_dir, PathBuf::from("D:\\logs"));
         assert!(config.dump);
@@ -152,6 +178,18 @@ mod tests {
         key.1.set_value(config_value::PIPE, &"a|b").unwrap();
 
         assert_eq!(Config::from_key(&key.1), Config::default());
+    }
+
+    #[test]
+    fn apps_filter_by_prefix() {
+        assert!(Config::default().scans_app("anything"));
+
+        let config = Config {
+            apps: vec!["powershell_".into()],
+            ..Config::default()
+        };
+        assert!(config.scans_app("PowerShell_C:\\Windows\\powershell.exe_10.0"));
+        assert!(!config.scans_app("JScript"));
     }
 
     #[test]
