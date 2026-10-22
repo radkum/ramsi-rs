@@ -1,20 +1,50 @@
-use std::{collections::BTreeSet, sync::PoisonError};
+use std::{
+    collections::BTreeSet,
+    sync::{Mutex, PoisonError},
+};
 
 use cs_parser::CSharpSession;
 use log::debug;
-use ps_parser::{CommandToken, ScriptResult, Token as PsToken};
+use ps_parser::{CommandToken, PowerShellSession, ScriptResult, Token as PsToken, Variables};
 use shared::DynResult;
 
-use super::{PsVersion, Ramsi_Impl, ScriptType, keywords::*};
+use super::{PsVersion, ScriptType, keywords::*};
 
 type PsTokens = Vec<PsToken>;
 
-#[derive(Debug, PartialEq)]
-pub(super) enum ScanStatus {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ScanStatus {
     Clean,
     Detected,
     Suspicious,
     NotDetected,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct ScanResult {
+    pub status: ScanStatus,
+    pub reason: Option<String>,
+}
+
+impl ScanResult {
+    fn new(status: ScanStatus, reason: String) -> Self {
+        Self {
+            status,
+            reason: Some(reason),
+        }
+    }
+}
+
+pub struct Scanner {
+    ps_session: Mutex<PowerShellSession>,
+}
+
+impl Default for Scanner {
+    fn default() -> Self {
+        Self {
+            ps_session: Mutex::new(PowerShellSession::new().with_variables(Variables::env())),
+        }
+    }
 }
 
 struct Tokens {
@@ -53,10 +83,10 @@ impl<'a> From<&'a Tokens> for RefTokens<'a> {
     }
 }
 
-impl Ramsi_Impl {
-    pub(super) fn scan_script(&self, script_content: &str, script_type: ScriptType) -> ScanStatus {
-        if let Some(status) = self.sha_scan(script_content) {
-            return status;
+impl Scanner {
+    pub fn scan(&self, script_content: &str, script_type: ScriptType) -> ScanResult {
+        if let Some(result) = self.sha_scan(script_content) {
+            return result;
         }
 
         // the session lock is released before token extraction
@@ -100,20 +130,23 @@ impl Ramsi_Impl {
         self.heuristic_scan((&tokens).into())
     }
 
-    fn sha_scan(&self, _script_content: &str) -> Option<ScanStatus> {
+    fn sha_scan(&self, _script_content: &str) -> Option<ScanResult> {
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(_script_content.as_bytes());
         let sha256 = hasher.finalize();
 
         if CLEANLIST_SHA256_SET.contains(&sha256) {
-            return Some(ScanStatus::Clean);
+            return Some(ScanResult::new(
+                ScanStatus::Clean,
+                format!("allowlisted sha256: {sha256:x}"),
+            ));
         }
 
         None
     }
 
-    fn heuristic_scan(&self, tokens: RefTokens<'_>) -> ScanStatus {
+    fn heuristic_scan(&self, tokens: RefTokens<'_>) -> ScanResult {
         let RefTokens {
             script_strings,
             commands_and_methods,
@@ -123,61 +156,80 @@ impl Ramsi_Impl {
 
         for s in BLACKLIST_KEYWORDS.iter() {
             if script_strings.contains(s) {
-                debug!("Blacklisted keyword in script detected TECHNIC 1. Keyword: {s}");
-                return ScanStatus::Detected;
+                return ScanResult::new(
+                    ScanStatus::Detected,
+                    format!("Blacklisted keyword in script detected TECHNIC 1. Keyword: {s}"),
+                );
             }
         }
 
         for s in BLACKLIST_FUNCTIONS.iter() {
             if commands_and_methods.contains(s) {
-                debug!("Blacklisted function in script detected. Function: {s}");
-                return ScanStatus::Detected;
+                return ScanResult::new(
+                    ScanStatus::Detected,
+                    format!("Blacklisted function in script detected. Function: {s}"),
+                );
             }
         }
 
         for keyword in BLACKLIST_KEYWORDS_ENDSWITH.iter() {
             for s in script_strings.iter() {
                 if s.ends_with(keyword) {
-                    debug!("Blacklisted keyword (endswith) in script detected. Keyword: {s}");
-                    return ScanStatus::Detected;
+                    return ScanResult::new(
+                        ScanStatus::Detected,
+                        format!("Blacklisted keyword (endswith) in script detected. Keyword: {s}"),
+                    );
                 }
             }
         }
 
         for s in TELEMETRY_STRINGS.iter() {
             if script_strings.contains(s) {
-                debug!("Telemetry keyword in script detected. Keyword: {s}");
-                return ScanStatus::Suspicious;
+                return ScanResult::new(
+                    ScanStatus::Suspicious,
+                    format!("Telemetry keyword in script detected. Keyword: {s}"),
+                );
             }
         }
 
         for s in TELEMETRY_FUNCTIONS.iter() {
             if commands_and_methods.contains(s) {
-                debug!("Telemetry keyword in script detected. Keyword: {s}");
-                return ScanStatus::Suspicious;
+                return ScanResult::new(
+                    ScanStatus::Suspicious,
+                    format!("Telemetry keyword in script detected. Keyword: {s}"),
+                );
             }
         }
 
         for s in TELEMETRY_TYPES.iter() {
             if ttypes.contains(s) {
-                debug!("Telemetry type in script detected. Keyword: {s}");
-                return ScanStatus::Suspicious;
+                return ScanResult::new(
+                    ScanStatus::Suspicious,
+                    format!("Telemetry type in script detected. Keyword: {s}"),
+                );
             }
         }
 
         match powershell_version {
             Some(PsVersion::V2) => {
-                debug!("Powershell version 2 detected");
-                return ScanStatus::Suspicious;
+                return ScanResult::new(
+                    ScanStatus::Suspicious,
+                    "Powershell version 2 detected".to_string(),
+                );
             },
             Some(PsVersion::Unknown) => {
-                debug!("Unknown Powershell version detected ");
-                return ScanStatus::Suspicious;
+                return ScanResult::new(
+                    ScanStatus::Suspicious,
+                    "Unknown Powershell version detected".to_string(),
+                );
             },
             _ => {},
         }
 
-        ScanStatus::NotDetected
+        ScanResult {
+            status: ScanStatus::NotDetected,
+            reason: None,
+        }
     }
 
     fn extract_tokens(script_result: ScriptResult) -> DynResult<Tokens> {
@@ -303,7 +355,6 @@ impl Ramsi_Impl {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Ramsi;
 
     #[test]
     fn blacklist_keywords() {
@@ -325,21 +376,22 @@ mod tests {
 
     #[test]
     fn sha_scan() {
-        let ramsi = Ramsi::new().into_static();
         assert_eq!(
-            ramsi.scan_script("prompt", ScriptType::PsCommand),
+            Scanner::default()
+                .scan("prompt", ScriptType::PsCommand)
+                .status,
             ScanStatus::Clean
         );
     }
 
     #[test]
     fn concurrent_scans() {
-        let ramsi = Ramsi::new().into_static();
+        let scanner = Scanner::default();
         std::thread::scope(|s| {
             for _ in 0..8 {
                 s.spawn(|| {
                     for _ in 0..20 {
-                        ramsi.scan_script("Get-Process | Out-Null", ScriptType::PsCommand);
+                        scanner.scan("Get-Process | Out-Null", ScriptType::PsCommand);
                     }
                 });
             }

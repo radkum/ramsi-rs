@@ -5,7 +5,7 @@ edition = "2024"
 
 [lib]
 path = "src/lib.rs"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 macros = { path = "../macros" }
