@@ -2,7 +2,9 @@ use std::path::Path;
 
 use shared::constants::LOG_DIR_SDDL;
 use windows::Win32::{
-    Foundation::{ERROR_ALREADY_EXISTS, HANDLE, HLOCAL, HMODULE, LocalFree},
+    Foundation::{
+        ERROR_ALREADY_EXISTS, GENERIC_ALL, GENERIC_WRITE, HANDLE, HLOCAL, HMODULE, LocalFree,
+    },
     Security::{
         ACCESS_ALLOWED_ACE, ACE_HEADER, ACL,
         Authorization::{
@@ -13,7 +15,10 @@ use windows::Win32::{
         OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES,
         WinBuiltinAdministratorsSid, WinLocalSystemSid,
     },
-    Storage::FileSystem::CreateDirectoryW,
+    Storage::FileSystem::{
+        CreateDirectoryW, DELETE, FILE_APPEND_DATA, FILE_DELETE_CHILD, FILE_WRITE_DATA, WRITE_DAC,
+        WRITE_OWNER,
+    },
     System::{Environment::GetCommandLineW, LibraryLoader::GetModuleFileNameW},
 };
 use windows_core::{HSTRING, Result};
@@ -67,8 +72,14 @@ pub fn create_log_dir(dir: &Path) -> std::io::Result<()> {
 // only Administrators or SYSTEM can write, change or replace it
 pub fn only_admins_can_write(path: &Path) -> Result<bool> {
     const ACCESS_ALLOWED_ACE_TYPE: u8 = 0;
-    const WRITE_RIGHTS: u32 =
-        0x2 | 0x4 | 0x40 | 0x10000 | 0x40000 | 0x80000 | 0x10000000 | 0x40000000;
+    const WRITE_RIGHTS: u32 = FILE_WRITE_DATA.0
+        | FILE_APPEND_DATA.0
+        | FILE_DELETE_CHILD.0
+        | DELETE.0
+        | WRITE_DAC.0
+        | WRITE_OWNER.0
+        | GENERIC_WRITE.0
+        | GENERIC_ALL.0;
 
     let mut owner = PSID::default();
     let mut dacl: *mut ACL = std::ptr::null_mut();
@@ -85,37 +96,32 @@ pub fn only_admins_can_write(path: &Path) -> Result<bool> {
             &mut sd,
         )
         .ok()?;
-        let is_admin = |sid: PSID| {
-            IsWellKnownSid(sid, WinBuiltinAdministratorsSid).as_bool()
-                || IsWellKnownSid(sid, WinLocalSystemSid).as_bool()
-        };
-        // a NULL DACL grants everyone full access
-        let mut safe = is_admin(owner) && !dacl.is_null();
-        for i in 0..if dacl.is_null() {
-            0
-        } else {
-            (*dacl).AceCount as u32
-        } {
+        let ace_is_safe = |i| {
             let mut ace = std::ptr::null_mut();
             if GetAce(dacl, i, &mut ace).is_err() {
-                safe = false;
-                break;
+                return false;
             }
             let header = &*(ace as *const ACE_HEADER);
             if header.AceType != ACCESS_ALLOWED_ACE_TYPE
                 || header.AceFlags as u32 & INHERIT_ONLY_ACE.0 != 0
             {
-                continue;
+                return true;
             }
             let allowed = &*(ace as *const ACCESS_ALLOWED_ACE);
-            let sid = PSID(&allowed.SidStart as *const u32 as _);
-            if allowed.Mask & WRITE_RIGHTS != 0 && !is_admin(sid) {
-                safe = false;
-                break;
-            }
-        }
+            allowed.Mask & WRITE_RIGHTS == 0 || is_admin(PSID(&allowed.SidStart as *const u32 as _))
+        };
+        // a NULL DACL grants everyone full access
+        let safe =
+            is_admin(owner) && !dacl.is_null() && (0..(*dacl).AceCount as u32).all(ace_is_safe);
         LocalFree(Some(HLOCAL(sd.0)));
         Ok(safe)
+    }
+}
+
+fn is_admin(sid: PSID) -> bool {
+    unsafe {
+        IsWellKnownSid(sid, WinBuiltinAdministratorsSid).as_bool()
+            || IsWellKnownSid(sid, WinLocalSystemSid).as_bool()
     }
 }
 
@@ -135,8 +141,7 @@ pub fn pipe_owner_is_admin(pipe: HANDLE) -> Result<bool> {
             Some(&mut sd),
         )
         .ok()?;
-        let admin = IsWellKnownSid(owner, WinBuiltinAdministratorsSid).as_bool()
-            || IsWellKnownSid(owner, WinLocalSystemSid).as_bool();
+        let admin = is_admin(owner);
         LocalFree(Some(HLOCAL(sd.0)));
         Ok(admin)
     }
