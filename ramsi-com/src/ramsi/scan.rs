@@ -247,8 +247,12 @@ impl Scanner {
 
         let tokens = tokens.all();
 
-        let (powershell_arguments, powershell_version) = Self::parse_powershell_cmd_args(&tokens);
-        commands_and_methods.extend(powershell_arguments);
+        let (powershell_commands, powershell_version) = Self::parse_powershell_cmd_args(&tokens);
+        for command in powershell_commands {
+            let words = Self::tokenize(&command);
+            string_set.extend(words.iter().cloned());
+            commands_and_methods.extend(words);
+        }
 
         let (cs_lowercased, cs_commands_and_methods) = Self::parse_embedded_csharp(&tokens);
         string_set.extend(cs_lowercased);
@@ -290,11 +294,12 @@ impl Scanner {
         let powershell_arguments = tokens
             .iter()
             .filter_map(|t| match t {
-                ps_parser::Token::Command(cmd) if cmd.name() == "powershell" => {
+                ps_parser::Token::Command(cmd) if Self::is_powershell(cmd.name()) => {
                     for (i, arg_name) in cmd.args().iter().enumerate() {
-                        if arg_name == "-command" {
-                            return cmd.args().get(i + 1).map(|s| s.to_ascii_lowercase());
-                        } else if arg_name == "-version" {
+                        if Self::is_parameter(arg_name, "-command") {
+                            // the rest of the command line is the script
+                            return Some(cmd.args()[i + 1..].join(" "));
+                        } else if Self::is_parameter(arg_name, "-version") {
                             // major version of "2", "2.0", "5.1"
                             let ps_version = cmd
                                 .args()
@@ -313,6 +318,20 @@ impl Scanner {
             })
             .collect::<BTreeSet<_>>();
         (powershell_arguments, powershell_version)
+    }
+
+    fn is_powershell(name: &str) -> bool {
+        let exe = name.rsplit(['\\', '/']).next().unwrap_or(name);
+        let exe = exe.to_ascii_lowercase();
+        matches!(
+            exe.strip_suffix(".exe").unwrap_or(&exe),
+            "powershell" | "pwsh"
+        )
+    }
+
+    // powershell.exe accepts any prefix of a parameter name, e.g. -c, -comm
+    fn is_parameter(arg: &str, name: &str) -> bool {
+        arg.len() >= 2 && name.starts_with(&arg.to_ascii_lowercase())
     }
 
     fn parse_add_type(cmd: &CommandToken) -> DynResult<(BTreeSet<String>, BTreeSet<String>)> {
@@ -423,6 +442,28 @@ mod tests {
         );
         assert_eq!(status("powershell -version 7.4"), ScanStatus::NotDetected);
         assert_eq!(status("powershell -version 2.0"), ScanStatus::Suspicious);
+    }
+
+    #[test]
+    fn powershell_by_path_and_abbreviated_parameters() {
+        assert_eq!(
+            status(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -version 2"),
+            ScanStatus::Suspicious
+        );
+        assert_eq!(status("POWERSHELL -V 2"), ScanStatus::Suspicious);
+        assert_eq!(status("pwsh -c iex x"), ScanStatus::Suspicious);
+    }
+
+    #[test]
+    fn command_argument_is_scanned_as_code() {
+        assert_eq!(
+            status(r#"powershell -NoProfile -Command "Write-Output 'x'; iex $a""#),
+            ScanStatus::Suspicious
+        );
+        assert_eq!(
+            status("powershell -command Write-Output amsiutils"),
+            ScanStatus::Detected
+        );
     }
 
     #[test]
