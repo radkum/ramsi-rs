@@ -38,7 +38,6 @@ pub extern "system" fn DllMain(module: HMODULE, reason: Dword, _: Lpvoid) -> boo
                 if let Err(err) = DisableThreadLibraryCalls(module) {
                     win_log!("Failed to disable thread library calls: {:?}", err);
                 }
-                Ramsi_Impl::create();
             }
         },
         DLL_PROCESS_DETACH => {
