@@ -7,18 +7,11 @@ use cs_parser::CSharpSession;
 use log::debug;
 use ps_parser::{CommandToken, PowerShellSession, ScriptResult, Token as PsToken, Variables};
 use shared::DynResult;
+pub use shared::ScanStatus;
 
 use super::{PsVersion, ScriptType, rules::Rules};
 
 type PsTokens = Vec<PsToken>;
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ScanStatus {
-    Clean,
-    Detected,
-    Suspicious,
-    NotDetected,
-}
 
 #[derive(Debug, PartialEq)]
 pub struct ScanResult {

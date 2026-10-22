@@ -26,6 +26,8 @@ pub struct Config {
     pub log_level: LevelFilter,
     pub log_dir: PathBuf,
     pub dump: bool,
+    // bytes of script content sent in an event
+    pub max_content: usize,
     pub pipe_name: String,
     pub rules: Option<PathBuf>,
 }
@@ -40,6 +42,7 @@ impl Default for Config {
             log_level: LevelFilter::Info,
             log_dir: PathBuf::from(DEFAULT_LOG_DIR),
             dump: false,
+            max_content: 64 * 1024,
             pipe_name: PipeName::from_suffix(RAMSI_PIPE_SUFFIX).to_string(),
             rules: None,
         }
@@ -103,6 +106,9 @@ impl Config {
         if let Ok(dump) = key.get_value::<u32, _>(config_value::DUMP) {
             config.dump = dump != 0;
         }
+        if let Ok(max_content) = key.get_value::<u32, _>(config_value::MAX_CONTENT) {
+            config.max_content = max_content as usize;
+        }
         if let Ok(suffix) = key.get_value::<String, _>(config_value::PIPE) {
             let pipe_name = PipeName::from_suffix(&suffix);
             if pipe_name.verify().is_ok() {
@@ -160,6 +166,7 @@ mod tests {
         key.1.set_value(config_value::LOG_LEVEL, &"debug").unwrap();
         key.1.set_value(config_value::LOG_DIR, &"D:\\logs").unwrap();
         key.1.set_value(config_value::DUMP, &1u32).unwrap();
+        key.1.set_value(config_value::MAX_CONTENT, &10u32).unwrap();
         key.1.set_value(config_value::PIPE, &"other").unwrap();
         key.1
             .set_value(config_value::RULES, &"C:\\rules.toml")
@@ -174,6 +181,7 @@ mod tests {
         assert_eq!(config.log_level, LevelFilter::Debug);
         assert_eq!(config.log_dir, PathBuf::from("D:\\logs"));
         assert!(config.dump);
+        assert_eq!(config.max_content, 10);
         assert_eq!(config.pipe_name, r"\\.\pipe\other");
         assert_eq!(config.rules, Some(PathBuf::from("C:\\rules.toml")));
     }

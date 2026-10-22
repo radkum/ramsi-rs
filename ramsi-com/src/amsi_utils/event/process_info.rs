@@ -45,7 +45,6 @@ impl ProcessInfo {
         self.tid
     }
 
-    #[allow(unused)]
     pub fn file_name(&self) -> &str {
         self.file_name.as_str()
     }

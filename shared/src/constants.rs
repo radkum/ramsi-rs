@@ -11,6 +11,7 @@ pub mod config_value {
     pub const LOG_LEVEL: &str = "log_level";
     pub const LOG_DIR: &str = "log_dir";
     pub const DUMP: &str = "dump";
+    pub const MAX_CONTENT: &str = "max_content";
     pub const PIPE: &str = "pipe";
     pub const RULES: &str = "rules";
 }
