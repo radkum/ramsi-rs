@@ -46,6 +46,15 @@ struct Tokens {
     ttypes: BTreeSet<String>,
 }
 
+impl Tokens {
+    fn extend(&mut self, other: Tokens) {
+        self.powershell_version = self.powershell_version.take().or(other.powershell_version);
+        self.script_strings.extend(other.script_strings);
+        self.commands_and_methods.extend(other.commands_and_methods);
+        self.ttypes.extend(other.ttypes);
+    }
+}
+
 struct RefTokens<'a> {
     powershell_version: Option<&'a PsVersion>,
     script_strings: BTreeSet<&'a str>,
@@ -134,7 +143,7 @@ impl Scanner {
                 .unwrap_or_else(PoisonError::into_inner),
             script_content,
         )?;
-        Self::extract_tokens(script_res)
+        self.extract_tokens(script_res)
     }
 
     fn sha_scan(&self, _script_content: &str) -> Option<ScanResult> {
@@ -239,7 +248,7 @@ impl Scanner {
         }
     }
 
-    fn extract_tokens(script_result: ScriptResult) -> DynResult<Tokens> {
+    fn extract_tokens(&self, script_result: ScriptResult) -> DynResult<Tokens> {
         let tokens = script_result.tokens();
         let mut string_set = tokens.lowercased_string_set();
         let mut commands_and_methods = tokens
@@ -256,22 +265,27 @@ impl Scanner {
         let tokens = tokens.all();
 
         let (powershell_commands, powershell_version) = Self::parse_powershell_cmd_args(&tokens);
-        for command in powershell_commands {
-            let words = Self::tokenize(&command);
-            string_set.extend(words.iter().cloned());
-            commands_and_methods.extend(words);
-        }
 
         let (cs_lowercased, cs_commands_and_methods) = Self::parse_embedded_csharp(&tokens);
         string_set.extend(cs_lowercased);
         commands_and_methods.extend(cs_commands_and_methods);
 
-        Ok(Tokens {
+        let mut tokens = Tokens {
             powershell_version,
             script_strings: string_set,
             commands_and_methods,
             ttypes,
-        })
+        };
+        // the -command text is a script of its own
+        for command in powershell_commands {
+            tokens.script_strings.extend(Self::tokenize(&command));
+            if let Ok(command_tokens) =
+                self.parse_tokens(&command, PowerShellSession::parse_command)
+            {
+                tokens.extend(command_tokens);
+            }
+        }
+        Ok(tokens)
     }
 
     fn tokenize(content: &str) -> BTreeSet<String> {
@@ -465,7 +479,7 @@ mod tests {
     #[test]
     fn command_argument_is_scanned_as_code() {
         assert_eq!(
-            status(r#"powershell -NoProfile -Command "Write-Output 'x'; iex $a""#),
+            status(r#"powershell -NoProfile -Command "Write-Output 'x'; iex 'y'""#),
             ScanStatus::Suspicious
         );
         assert_eq!(
@@ -498,6 +512,14 @@ mod tests {
         );
         assert_eq!(scan("AmsiInitialize(ctx)"), ScanStatus::Detected);
         assert_eq!(scan("LoadLibrary('amsi.dll')"), ScanStatus::Detected);
+    }
+
+    #[test]
+    fn command_text_words_are_not_calls() {
+        assert_eq!(
+            status(r#"powershell -c "Write-Host Start the Run""#),
+            ScanStatus::NotDetected
+        );
     }
 
     #[test]
