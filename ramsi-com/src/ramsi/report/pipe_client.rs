@@ -262,6 +262,12 @@ mod tests {
             let _ = CloseHandle(process);
         }
 
+        // STATUS_DLL_INIT_FAILED: no desktop the LUA token may use, e.g. a CI service
+        // session
+        if res.is_none() && exit_code == 0xc0000142 {
+            eprintln!("SKIPPED: a non-elevated process cannot start in this session");
+            return;
+        }
         let (res, active) =
             res.unwrap_or_else(|| panic!("pipe server did not start, exit code 0x{exit_code:x}"));
         assert!(
