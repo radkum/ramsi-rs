@@ -48,7 +48,6 @@ impl Drop for Registered {
         }
         let _ = config().delete_value("mode");
         let _ = config().delete_value("rules");
-        let _ = config().delete_value("pipe");
         let _ = std::fs::remove_file(rules_path());
     }
 }
@@ -91,7 +90,7 @@ async fn powershell_is_blocked_and_reported() {
             )
             .unwrap()
     };
-    let _registered = Registered::new(&suffix);
+    let registered = Registered::new(&suffix);
     config().set_value("mode", &"block").unwrap();
     // a keyword only this provider knows, other providers on the machine may block
     // first
@@ -133,4 +132,10 @@ async fn powershell_is_blocked_and_reported() {
     assert!(event.blocked);
     assert!(event.content.contains(MARKER), "{event:?}");
     assert_eq!(event.process, "powershell.exe");
+
+    drop(registered);
+    assert!(
+        config().get_raw_value("pipe").is_err(),
+        "unregister left the pipe"
+    );
 }
