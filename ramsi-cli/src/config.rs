@@ -1,8 +1,28 @@
+use std::path::{Path, PathBuf};
+
 use shared::{
     DynResult, PipeName,
-    constants::{CONFIG_KEY, RAMSI_CLSID, RAMSI_PIPE_SUFFIX, config_value::*},
+    constants::{CONFIG_KEY, DEFAULT_LOG_DIR, RAMSI_CLSID, RAMSI_PIPE_SUFFIX, config_value::*},
 };
+use windows::Win32::{
+    Foundation::{HLOCAL, LocalFree},
+    Security::{
+        ACL,
+        Authorization::{
+            ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1, SE_FILE_OBJECT,
+            SetNamedSecurityInfoW,
+        },
+        DACL_SECURITY_INFORMATION, GetSecurityDescriptorDacl, PROTECTED_DACL_SECURITY_INFORMATION,
+        PSECURITY_DESCRIPTOR,
+    },
+};
+use windows_core::{BOOL, HSTRING};
 use winreg::{RegKey, RegValue, enums::*};
+
+// SYSTEM and admins: full; users: create files they own, not read others' logs
+// and dumps
+const LOG_DIR_SDDL: &str =
+    "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;;0x1000a2;;;AU)(A;OICIIO;FA;;;CO)";
 
 enum Kind {
     Text,
@@ -50,6 +70,48 @@ pub fn pipe_suffix() -> String {
         .open_subkey(CONFIG_KEY)
         .and_then(|key| key.get_value(PIPE))
         .unwrap_or_else(|_| RAMSI_PIPE_SUFFIX.to_string())
+}
+
+pub fn secure_log_dir() -> DynResult<PathBuf> {
+    let dir: PathBuf = hklm()
+        .open_subkey(CONFIG_KEY)
+        .and_then(|key| key.get_value::<String, _>(LOG_DIR))
+        .unwrap_or_else(|_| DEFAULT_LOG_DIR.to_string())
+        .into();
+    secure_dir(&dir)?;
+    Ok(dir)
+}
+
+fn secure_dir(dir: &Path) -> DynResult<()> {
+    std::fs::create_dir_all(dir)?;
+    unsafe {
+        let mut sd = PSECURITY_DESCRIPTOR::default();
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            &HSTRING::from(LOG_DIR_SDDL),
+            SDDL_REVISION_1,
+            &mut sd,
+            None,
+        )?;
+        let mut present = BOOL(0);
+        let mut defaulted = BOOL(0);
+        let mut dacl: *mut ACL = std::ptr::null_mut();
+        let res =
+            GetSecurityDescriptorDacl(sd, &mut present, &mut dacl, &mut defaulted).and_then(|_| {
+                SetNamedSecurityInfoW(
+                    &HSTRING::from(dir.as_os_str()),
+                    SE_FILE_OBJECT,
+                    DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                    None,
+                    None,
+                    Some(dacl),
+                    None,
+                )
+                .ok()
+            });
+        LocalFree(Some(HLOCAL(sd.0)));
+        res?;
+    }
+    Ok(())
 }
 
 pub fn set(name: &str, value: &str) -> DynResult<()> {
@@ -125,4 +187,54 @@ pub fn status() -> DynResult<()> {
         (Err(_), _) => println!("Not registered"),
     }
     show()
+}
+
+#[cfg(test)]
+mod tests {
+    use windows::Win32::Security::Authorization::{
+        ConvertSecurityDescriptorToStringSecurityDescriptorW, GetNamedSecurityInfoW,
+    };
+    use windows_core::PWSTR;
+
+    use super::*;
+
+    #[test]
+    fn secured_dir_has_protected_dacl() {
+        // reused across runs, never removed
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../target/acl-test");
+        secure_dir(&dir).unwrap();
+
+        let sddl = unsafe {
+            let mut sd = PSECURITY_DESCRIPTOR::default();
+            GetNamedSecurityInfoW(
+                &HSTRING::from(dir.as_os_str()),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                None,
+                None,
+                None,
+                None,
+                &mut sd,
+            )
+            .ok()
+            .unwrap();
+            let mut text = PWSTR::null();
+            ConvertSecurityDescriptorToStringSecurityDescriptorW(
+                sd,
+                SDDL_REVISION_1,
+                DACL_SECURITY_INFORMATION,
+                &mut text,
+                None,
+            )
+            .unwrap();
+            let sddl = text.to_string().unwrap();
+            LocalFree(Some(HLOCAL(text.0 as _)));
+            LocalFree(Some(HLOCAL(sd.0)));
+            sddl
+        };
+
+        assert!(sddl.starts_with("D:P"), "{sddl}");
+        assert!(sddl.contains("(A;OICIIO;FA;;;CO)"), "{sddl}");
+        assert!(!sddl.contains(";;;BU)"), "{sddl}");
+    }
 }
