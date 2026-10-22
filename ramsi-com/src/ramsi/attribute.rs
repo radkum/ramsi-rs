@@ -67,7 +67,11 @@ impl Ramsi_Impl {
             // content is not in memory, it must be read from the stream
             let mut read_size: u32 = 0;
             if let Err(err) = unsafe { s.Read(0, out_buf.as_mut_slice(), &mut read_size) } {
-                error!("IAmsiStream::Read error: 0x{:08x}, msg: {}", err.code().0, err.message());
+                error!(
+                    "IAmsiStream::Read error: 0x{:08x}, msg: {}",
+                    err.code().0,
+                    err.message()
+                );
             }
             out_buf.truncate(read_size as usize);
         } else {
@@ -159,11 +163,17 @@ mod tests {
 
     #[test]
     fn content_from_memory() {
-        assert_eq!(Ramsi_Impl::get_content(&stream("Get-Process", true)), "Get-Process");
+        assert_eq!(
+            Ramsi_Impl::get_content(&stream("Get-Process", true)),
+            "Get-Process"
+        );
     }
 
     #[test]
     fn content_from_read_when_address_is_null() {
-        assert_eq!(Ramsi_Impl::get_content(&stream("Get-Process", false)), "Get-Process");
+        assert_eq!(
+            Ramsi_Impl::get_content(&stream("Get-Process", false)),
+            "Get-Process"
+        );
     }
 }
