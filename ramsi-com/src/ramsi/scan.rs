@@ -5,13 +5,11 @@ use std::{
 
 use cs_parser::CSharpSession;
 use log::debug;
-use ps_parser::{CommandToken, PowerShellSession, ScriptResult, Token as PsToken, Variables};
+use ps_parser::{CommandToken, PowerShellSession, ScriptResult, Variables};
 use shared::DynResult;
 pub use shared::ScanStatus;
 
 use super::{PsVersion, ScriptType, rules::Rules};
-
-type PsTokens = Vec<PsToken>;
 
 #[derive(Debug, PartialEq)]
 pub struct ScanResult {
@@ -55,35 +53,6 @@ impl Tokens {
     }
 }
 
-struct RefTokens<'a> {
-    powershell_version: Option<&'a PsVersion>,
-    script_strings: BTreeSet<&'a str>,
-    commands_and_methods: BTreeSet<&'a str>,
-    ttypes: BTreeSet<&'a str>,
-}
-
-impl<'a> From<&'a Tokens> for RefTokens<'a> {
-    fn from(tokens: &'a Tokens) -> Self {
-        let Tokens {
-            powershell_version,
-            script_strings,
-            commands_and_methods,
-            ttypes,
-        } = tokens;
-
-        let script_strings = script_strings.iter().map(|s| s.as_str()).collect();
-        let commands_and_methods = commands_and_methods.iter().map(|s| s.as_str()).collect();
-        let ttypes = ttypes.iter().map(|s| s.as_str()).collect();
-
-        RefTokens {
-            powershell_version: powershell_version.as_ref(),
-            script_strings,
-            commands_and_methods,
-            ttypes,
-        }
-    }
-}
-
 impl Scanner {
     pub fn new(rules: Rules) -> Self {
         Self {
@@ -112,9 +81,11 @@ impl Scanner {
             debug!("Failed to parse script: {err}");
             let string_set: BTreeSet<String> = Self::tokenize(script_content);
             // any word can be a call here, so skip telemetry functions like run or start
-            let functions_and_commands = string_set
+            let functions_and_commands = self
+                .rules
+                .blacklist_functions
                 .iter()
-                .filter(|s| self.rules.blacklist_functions.contains(s))
+                .filter(|f| string_set.contains(f.as_str()))
                 .cloned()
                 .collect();
             let ttypes = string_set.clone();
@@ -127,7 +98,7 @@ impl Scanner {
             }
         });
 
-        self.heuristic_scan((&tokens).into())
+        self.heuristic_scan(&tokens)
     }
 
     fn parse_tokens<E: std::error::Error + 'static>(
@@ -162,8 +133,8 @@ impl Scanner {
         None
     }
 
-    fn heuristic_scan(&self, tokens: RefTokens<'_>) -> ScanResult {
-        let RefTokens {
+    fn heuristic_scan(&self, tokens: &Tokens) -> ScanResult {
+        let Tokens {
             script_strings,
             commands_and_methods,
             ttypes,
@@ -262,11 +233,11 @@ impl Scanner {
             .map(|s| s.to_string())
             .collect::<BTreeSet<_>>();
 
-        let tokens = tokens.all();
+        let commands = tokens.commands();
 
-        let (powershell_commands, powershell_version) = Self::parse_powershell_cmd_args(&tokens);
+        let (powershell_commands, powershell_version) = Self::parse_powershell_cmd_args(&commands);
 
-        let (cs_lowercased, cs_commands_and_methods) = Self::parse_embedded_csharp(&tokens);
+        let (cs_lowercased, cs_commands_and_methods) = Self::parse_embedded_csharp(&commands);
         string_set.extend(cs_lowercased);
         commands_and_methods.extend(cs_commands_and_methods);
 
@@ -296,12 +267,11 @@ impl Scanner {
             .collect()
     }
 
-    fn parse_embedded_csharp(tokens: &PsTokens) -> (BTreeSet<String>, BTreeSet<String>) {
+    fn parse_embedded_csharp(commands: &[CommandToken]) -> (BTreeSet<String>, BTreeSet<String>) {
         let mut cs_lowercased = BTreeSet::new();
         let mut cs_commands_and_methods = BTreeSet::new();
-        for token in tokens.iter() {
-            if let ps_parser::Token::Command(cmd) = token
-                && cmd.name().eq_ignore_ascii_case("add-type")
+        for cmd in commands {
+            if cmd.name().eq_ignore_ascii_case("add-type")
                 && let Ok((lowercased_strings, commands_and_methods)) = Self::parse_add_type(cmd)
             {
                 cs_commands_and_methods.extend(commands_and_methods);
@@ -311,32 +281,32 @@ impl Scanner {
         (cs_lowercased, cs_commands_and_methods)
     }
 
-    fn parse_powershell_cmd_args(tokens: &PsTokens) -> (BTreeSet<String>, Option<PsVersion>) {
+    fn parse_powershell_cmd_args(
+        commands: &[CommandToken],
+    ) -> (BTreeSet<String>, Option<PsVersion>) {
         let mut powershell_version: Option<PsVersion> = None;
-        let powershell_arguments = tokens
+        let powershell_arguments = commands
             .iter()
-            .filter_map(|t| match t {
-                ps_parser::Token::Command(cmd) if Self::is_powershell(cmd.name()) => {
-                    for (i, arg_name) in cmd.args().iter().enumerate() {
-                        if Self::is_parameter(arg_name, "-command") {
-                            // the rest of the command line is the script
-                            return Some(cmd.args()[i + 1..].join(" "));
-                        } else if Self::is_parameter(arg_name, "-version") {
-                            // major version of "2", "2.0", "5.1"
-                            let ps_version = cmd
-                                .args()
-                                .get(i + 1)
-                                .and_then(|s| s.split('.').next()?.parse::<u32>().ok());
-                            powershell_version = powershell_version.take().max(match ps_version {
-                                Some(..=2) => Some(PsVersion::V2),
-                                Some(3..) => Some(PsVersion::V3AndAbove),
-                                _ => Some(PsVersion::Unknown),
-                            });
-                        }
+            .filter(|cmd| Self::is_powershell(cmd.name()))
+            .filter_map(|cmd| {
+                for (i, arg_name) in cmd.args().iter().enumerate() {
+                    if Self::is_parameter(arg_name, "-command") {
+                        // the rest of the command line is the script
+                        return Some(cmd.args()[i + 1..].join(" "));
+                    } else if Self::is_parameter(arg_name, "-version") {
+                        // major version of "2", "2.0", "5.1"
+                        let ps_version = cmd
+                            .args()
+                            .get(i + 1)
+                            .and_then(|s| s.split('.').next()?.parse::<u32>().ok());
+                        powershell_version = powershell_version.take().max(match ps_version {
+                            Some(..=2) => Some(PsVersion::V2),
+                            Some(3..) => Some(PsVersion::V3AndAbove),
+                            _ => Some(PsVersion::Unknown),
+                        });
                     }
-                    None
-                },
-                _ => None,
+                }
+                None
             })
             .collect::<BTreeSet<_>>();
         (powershell_arguments, powershell_version)
@@ -344,11 +314,9 @@ impl Scanner {
 
     fn is_powershell(name: &str) -> bool {
         let exe = name.rsplit(['\\', '/']).next().unwrap_or(name);
-        let exe = exe.to_ascii_lowercase();
-        matches!(
-            exe.strip_suffix(".exe").unwrap_or(&exe),
-            "powershell" | "pwsh"
-        )
+        ["powershell", "pwsh", "powershell.exe", "pwsh.exe"]
+            .iter()
+            .any(|n| exe.eq_ignore_ascii_case(n))
     }
 
     // powershell.exe accepts any prefix of a parameter name, e.g. -c, -comm
