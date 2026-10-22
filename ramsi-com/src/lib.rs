@@ -7,7 +7,7 @@ mod winapi;
 
 use amsi_utils as utils;
 use ramsi::{Ramsi, Ramsi_Impl};
-pub use ramsi::{ScanResult, ScanStatus, Scanner, ScriptType};
+pub use ramsi::{Rules, ScanResult, ScanStatus, Scanner, ScriptType};
 use shared::{
     PipeName,
     constants::{CONFIG_KEY, RAMSI_PIPE_SUFFIX, config_value},

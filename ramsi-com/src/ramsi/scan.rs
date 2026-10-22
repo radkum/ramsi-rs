@@ -8,7 +8,7 @@ use log::debug;
 use ps_parser::{CommandToken, PowerShellSession, ScriptResult, Token as PsToken, Variables};
 use shared::DynResult;
 
-use super::{PsVersion, ScriptType, keywords::*};
+use super::{PsVersion, ScriptType, rules::Rules};
 
 type PsTokens = Vec<PsToken>;
 
@@ -37,13 +37,12 @@ impl ScanResult {
 
 pub struct Scanner {
     ps_session: Mutex<PowerShellSession>,
+    rules: Rules,
 }
 
 impl Default for Scanner {
     fn default() -> Self {
-        Self {
-            ps_session: Mutex::new(PowerShellSession::new().with_variables(Variables::env())),
-        }
+        Self::new(Rules::default())
     }
 }
 
@@ -84,6 +83,13 @@ impl<'a> From<&'a Tokens> for RefTokens<'a> {
 }
 
 impl Scanner {
+    pub fn new(rules: Rules) -> Self {
+        Self {
+            ps_session: Mutex::new(PowerShellSession::new().with_variables(Variables::env())),
+            rules,
+        }
+    }
+
     pub fn scan(&self, script_content: &str, script_type: ScriptType) -> ScanResult {
         if let Some(result) = self.sha_scan(script_content) {
             return result;
@@ -136,7 +142,7 @@ impl Scanner {
         hasher.update(_script_content.as_bytes());
         let sha256 = hasher.finalize();
 
-        if CLEANLIST_SHA256_SET.contains(&sha256) {
+        if self.rules.is_allowlisted(&sha256.into()) {
             return Some(ScanResult::new(
                 ScanStatus::Clean,
                 format!("allowlisted sha256: {sha256:x}"),
@@ -154,8 +160,8 @@ impl Scanner {
             powershell_version,
         } = tokens;
 
-        for s in BLACKLIST_KEYWORDS.iter() {
-            if script_strings.contains(s) {
+        for s in self.rules.blacklist_keywords.iter() {
+            if script_strings.contains(s.as_str()) {
                 return ScanResult::new(
                     ScanStatus::Detected,
                     format!("Blacklisted keyword in script detected TECHNIC 1. Keyword: {s}"),
@@ -163,8 +169,8 @@ impl Scanner {
             }
         }
 
-        for s in BLACKLIST_FUNCTIONS.iter() {
-            if commands_and_methods.contains(s) {
+        for s in self.rules.blacklist_functions.iter() {
+            if commands_and_methods.contains(s.as_str()) {
                 return ScanResult::new(
                     ScanStatus::Detected,
                     format!("Blacklisted function in script detected. Function: {s}"),
@@ -172,7 +178,7 @@ impl Scanner {
             }
         }
 
-        for keyword in BLACKLIST_KEYWORDS_ENDSWITH.iter() {
+        for keyword in self.rules.blacklist_keywords_endswith.iter() {
             for s in script_strings.iter() {
                 if s.ends_with(keyword) {
                     return ScanResult::new(
@@ -183,8 +189,8 @@ impl Scanner {
             }
         }
 
-        for s in TELEMETRY_STRINGS.iter() {
-            if script_strings.contains(s) {
+        for s in self.rules.telemetry_strings.iter() {
+            if script_strings.contains(s.as_str()) {
                 return ScanResult::new(
                     ScanStatus::Suspicious,
                     format!("Telemetry keyword in script detected. Keyword: {s}"),
@@ -192,8 +198,8 @@ impl Scanner {
             }
         }
 
-        for s in TELEMETRY_FUNCTIONS.iter() {
-            if commands_and_methods.contains(s) {
+        for s in self.rules.telemetry_functions.iter() {
+            if commands_and_methods.contains(s.as_str()) {
                 return ScanResult::new(
                     ScanStatus::Suspicious,
                     format!("Telemetry keyword in script detected. Keyword: {s}"),
@@ -201,8 +207,8 @@ impl Scanner {
             }
         }
 
-        for s in TELEMETRY_TYPES.iter() {
-            if ttypes.contains(s) {
+        for s in self.rules.telemetry_types.iter() {
+            if ttypes.contains(s.as_str()) {
                 return ScanResult::new(
                     ScanStatus::Suspicious,
                     format!("Telemetry type in script detected. Keyword: {s}"),
@@ -358,7 +364,10 @@ mod tests {
 
     #[test]
     fn blacklist_keywords() {
-        let keywords: std::collections::HashSet<_> = BLACKLIST_KEYWORDS.iter().cloned().collect();
+        let keywords: std::collections::HashSet<_> = super::super::keywords::BLACKLIST_KEYWORDS
+            .iter()
+            .cloned()
+            .collect();
 
         let keywords_lowercased: [&str; 6] = [
             "amsi.dll",
@@ -382,6 +391,22 @@ mod tests {
                 .status,
             ScanStatus::Clean
         );
+    }
+
+    #[test]
+    fn rules_from_file_are_applied() {
+        use sha2::{Digest, Sha256};
+        let sha256 = hex::encode(Sha256::digest("Get-Date"));
+        let rules = Rules::parse(&format!(
+            "blacklist_keywords = [\"Evil-Thing\"]\nallowlist_sha256 = [\"{sha256}\"]"
+        ))
+        .unwrap();
+        let scanner = Scanner::new(rules);
+
+        let result = scanner.scan("Write-Output 'evil-thing'", ScriptType::PsScript);
+        assert_eq!(result.status, ScanStatus::Detected);
+        let result = scanner.scan("Get-Date", ScriptType::PsCommand);
+        assert_eq!(result.status, ScanStatus::Clean);
     }
 
     #[test]

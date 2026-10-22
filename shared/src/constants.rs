@@ -12,4 +12,5 @@ pub mod config_value {
     pub const LOG_DIR: &str = "log_dir";
     pub const DUMP: &str = "dump";
     pub const PIPE: &str = "pipe";
+    pub const RULES: &str = "rules";
 }

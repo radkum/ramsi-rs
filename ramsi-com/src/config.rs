@@ -27,6 +27,7 @@ pub struct Config {
     pub log_dir: PathBuf,
     pub dump: bool,
     pub pipe_name: String,
+    pub rules: Option<PathBuf>,
 }
 
 impl Default for Config {
@@ -40,6 +41,7 @@ impl Default for Config {
             log_dir: PathBuf::from(DEFAULT_LOG_DIR),
             dump: false,
             pipe_name: PipeName::from_suffix(RAMSI_PIPE_SUFFIX).to_string(),
+            rules: None,
         }
     }
 }
@@ -107,6 +109,9 @@ impl Config {
                 config.pipe_name = pipe_name.to_string();
             }
         }
+        if let Ok(rules) = key.get_value::<String, _>(config_value::RULES) {
+            config.rules = Some(rules.into());
+        }
         config
     }
 }
@@ -156,6 +161,9 @@ mod tests {
         key.1.set_value(config_value::LOG_DIR, &"D:\\logs").unwrap();
         key.1.set_value(config_value::DUMP, &1u32).unwrap();
         key.1.set_value(config_value::PIPE, &"other").unwrap();
+        key.1
+            .set_value(config_value::RULES, &"C:\\rules.toml")
+            .unwrap();
 
         let config = Config::from_key(&key.1);
 
@@ -167,6 +175,7 @@ mod tests {
         assert_eq!(config.log_dir, PathBuf::from("D:\\logs"));
         assert!(config.dump);
         assert_eq!(config.pipe_name, r"\\.\pipe\other");
+        assert_eq!(config.rules, Some(PathBuf::from("C:\\rules.toml")));
     }
 
     #[test]

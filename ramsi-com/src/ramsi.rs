@@ -4,6 +4,7 @@ mod antimalware;
 mod attribute;
 mod keywords;
 mod report;
+mod rules;
 mod scan;
 
 use core::result::Result;
@@ -14,6 +15,7 @@ pub use antimalware::ScriptType;
 use fern::Dispatch;
 use log::{LevelFilter, debug, error};
 use report::PipeClient;
+pub use rules::Rules;
 pub use scan::{ScanResult, ScanStatus, Scanner};
 use shared::win_log;
 use tokio::sync::RwLock;
@@ -51,12 +53,22 @@ impl Ramsi {
         }
 
         Self {
-            scanner: Scanner::default(),
+            scanner: Scanner::new(Self::load_rules(&config)),
             process_info,
             request_number: AtomicU32::new(0),
             pipe_client: Arc::new(RwLock::new(PipeClient::new(&config.pipe_name))),
             config,
         }
+    }
+
+    fn load_rules(config: &Config) -> Rules {
+        let Some(path) = &config.rules else {
+            return Rules::default();
+        };
+        Rules::load(path).unwrap_or_else(|err| {
+            error!("Failed to load rules from {}: {err}", path.display());
+            Rules::default()
+        })
     }
 
     fn init_logging(
