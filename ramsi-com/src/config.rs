@@ -68,8 +68,12 @@ impl Config {
     }
 
     pub fn scans_app(&self, app_name: &str) -> bool {
-        let app_name = app_name.to_ascii_lowercase();
-        self.apps.is_empty() || self.apps.iter().any(|app| app_name.starts_with(app))
+        self.apps.is_empty()
+            || self.apps.iter().any(|app| {
+                app_name
+                    .get(..app.len())
+                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case(app))
+            })
     }
 
     fn from_key(key: &RegKey) -> Self {

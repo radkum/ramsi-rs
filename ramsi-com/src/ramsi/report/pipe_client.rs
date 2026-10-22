@@ -91,12 +91,9 @@ impl PipeClient {
         self.pipe.is_some()
     }
 
-    pub async fn send<M: Serialize + Clone + std::fmt::Debug>(
-        &mut self,
-        message: M,
-    ) -> Result<(), PipeClientError> {
+    pub async fn send<M: Serialize>(&mut self, message: M) -> Result<(), PipeClientError> {
         if let Some(ref mut pipe) = self.pipe {
-            let res = time::timeout(SEND_TIMEOUT, Self::send_internal(pipe, message.clone())).await;
+            let res = time::timeout(SEND_TIMEOUT, Self::send_internal(pipe, &message)).await;
             if !matches!(res, Ok(Ok(()))) {
                 // broken or stalled pipe, reconnect on next send
                 self.pipe = None;
@@ -111,14 +108,11 @@ impl PipeClient {
         }
     }
 
-    pub async fn send_internal<
-        M: Serialize + Clone + std::fmt::Debug,
-        W: AsyncWriteExt + std::marker::Unpin,
-    >(
+    pub async fn send_internal<M: Serialize, W: AsyncWriteExt + std::marker::Unpin>(
         pipe: &mut W,
-        message: M,
+        message: &M,
     ) -> std::io::Result<()> {
-        let buffer = to_vec(&message)?;
+        let buffer = to_vec(message)?;
         pipe.write_u64(buffer.len() as _).await?;
         pipe.write_all(&buffer).await?;
         Ok(())

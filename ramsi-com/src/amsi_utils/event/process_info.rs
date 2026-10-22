@@ -8,7 +8,6 @@ use windows::Win32::System::Threading::GetCurrentThreadId;
 
 use crate::winapi::get_command_line;
 
-#[derive(Default, Clone)]
 pub(crate) struct ProcessInfo {
     pid: u32,
     tid: u32,
