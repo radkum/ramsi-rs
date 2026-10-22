@@ -2,26 +2,25 @@ use std::path::Path;
 
 use shared::constants::LOG_DIR_SDDL;
 use windows::Win32::{
-    Foundation::{
-        ERROR_ALREADY_EXISTS, GENERIC_ALL, GENERIC_WRITE, HANDLE, HLOCAL, HMODULE, LocalFree,
-    },
+    Foundation::{GENERIC_ALL, GENERIC_WRITE, HANDLE, HLOCAL, HMODULE, LocalFree},
     Security::{
         ACCESS_ALLOWED_ACE, ACE_HEADER, ACL,
         Authorization::{
             ConvertStringSecurityDescriptorToSecurityDescriptorW, GetNamedSecurityInfoW,
             GetSecurityInfo, SDDL_REVISION_1, SE_FILE_OBJECT, SE_KERNEL_OBJECT,
+            SetNamedSecurityInfoW,
         },
-        DACL_SECURITY_INFORMATION, GetAce, INHERIT_ONLY_ACE, IsWellKnownSid,
-        OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES,
+        DACL_SECURITY_INFORMATION, GetAce, GetSecurityDescriptorDacl, GetSecurityDescriptorOwner,
+        INHERIT_ONLY_ACE, IsWellKnownSid, OWNER_SECURITY_INFORMATION,
+        PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
         WinBuiltinAdministratorsSid, WinLocalSystemSid,
     },
     Storage::FileSystem::{
-        CreateDirectoryW, DELETE, FILE_APPEND_DATA, FILE_DELETE_CHILD, FILE_WRITE_DATA, WRITE_DAC,
-        WRITE_OWNER,
+        DELETE, FILE_APPEND_DATA, FILE_DELETE_CHILD, FILE_WRITE_DATA, WRITE_DAC, WRITE_OWNER,
     },
     System::{Environment::GetCommandLineW, LibraryLoader::GetModuleFileNameW},
 };
-use windows_core::{HSTRING, Result};
+use windows_core::{BOOL, HSTRING, Result};
 
 #[allow(overflowing_literals)]
 pub const E_NOT_SUFFICIENT_BUFFER: i32 = 0x8007007a_i32;
@@ -41,31 +40,62 @@ pub fn get_command_line() -> String {
     unsafe { GetCommandLineW().to_string() }.unwrap_or_default()
 }
 
-// created with the protected DACL by whichever process comes first
-pub fn create_log_dir(dir: &Path) -> std::io::Result<()> {
-    if dir.is_dir() {
-        return Ok(());
-    }
-    if let Some(parent) = dir.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let mut attributes = SECURITY_ATTRIBUTES {
-        nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
-        ..Default::default()
-    };
+// owner BA needs an elevated caller, so only register can make a trusted log
+// dir
+pub fn secure_log_dir(dir: &Path) -> Result<()> {
+    std::fs::create_dir_all(dir)?;
     unsafe {
+        let mut sd = PSECURITY_DESCRIPTOR::default();
         ConvertStringSecurityDescriptorToSecurityDescriptorW(
             &HSTRING::from(LOG_DIR_SDDL),
             SDDL_REVISION_1,
-            &mut attributes.lpSecurityDescriptor as *mut _ as _,
+            &mut sd,
             None,
         )?;
-        let res = CreateDirectoryW(&HSTRING::from(dir.as_os_str()), Some(&attributes));
-        LocalFree(Some(HLOCAL(attributes.lpSecurityDescriptor)));
-        match res {
-            Err(err) if err.code() != ERROR_ALREADY_EXISTS.to_hresult() => Err(err.into()),
-            _ => Ok(()),
-        }
+        let mut present = BOOL(0);
+        let mut defaulted = BOOL(0);
+        let mut dacl: *mut ACL = std::ptr::null_mut();
+        let mut owner = PSID::default();
+        let res = GetSecurityDescriptorDacl(sd, &mut present, &mut dacl, &mut defaulted)
+            .and_then(|_| GetSecurityDescriptorOwner(sd, &mut owner, &mut defaulted))
+            .and_then(|_| {
+                SetNamedSecurityInfoW(
+                    &HSTRING::from(dir.as_os_str()),
+                    SE_FILE_OBJECT,
+                    OWNER_SECURITY_INFORMATION
+                        | DACL_SECURITY_INFORMATION
+                        | PROTECTED_DACL_SECURITY_INFORMATION,
+                    Some(owner),
+                    None,
+                    Some(dacl),
+                    None,
+                )
+                .ok()
+            });
+        LocalFree(Some(HLOCAL(sd.0)));
+        res
+    }
+}
+
+// a dir a user created could let them read others' logs and dumps
+pub fn path_owner_is_admin(path: &Path) -> Result<bool> {
+    let mut owner = PSID::default();
+    let mut sd = PSECURITY_DESCRIPTOR::default();
+    unsafe {
+        GetNamedSecurityInfoW(
+            &HSTRING::from(path.as_os_str()),
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION,
+            Some(&mut owner),
+            None,
+            None,
+            None,
+            &mut sd,
+        )
+        .ok()?;
+        let admin = is_admin(owner);
+        LocalFree(Some(HLOCAL(sd.0)));
+        Ok(admin)
     }
 }
 
@@ -189,8 +219,11 @@ mod tests {
 
     // a file under target/acl-test-rules created with `sddl`
     fn file_with_sddl(name: &str, sddl: &str) -> std::path::PathBuf {
-        use windows::Win32::Storage::FileSystem::{
-            CREATE_NEW, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_GENERIC_WRITE, FILE_SHARE_NONE,
+        use windows::Win32::{
+            Security::SECURITY_ATTRIBUTES,
+            Storage::FileSystem::{
+                CREATE_NEW, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_GENERIC_WRITE, FILE_SHARE_NONE,
+            },
         };
 
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../target/acl-test-rules");
@@ -240,44 +273,17 @@ mod tests {
     }
 
     #[test]
-    fn log_dir_gets_protected_dacl() {
-        use windows::Win32::Security::Authorization::ConvertSecurityDescriptorToStringSecurityDescriptorW;
-        use windows_core::PWSTR;
-
-        // created on the first run, never removed
+    fn secured_log_dir_is_owned_by_admins() {
+        // reused across runs, never removed
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../target/acl-test-dll/logs");
-        create_log_dir(&dir).unwrap();
+        secure_log_dir(&dir).unwrap();
+        assert!(path_owner_is_admin(&dir).unwrap());
 
-        let sddl = unsafe {
-            let mut sd = PSECURITY_DESCRIPTOR::default();
-            GetNamedSecurityInfoW(
-                &HSTRING::from(dir.as_os_str()),
-                SE_FILE_OBJECT,
-                DACL_SECURITY_INFORMATION,
-                None,
-                None,
-                None,
-                None,
-                &mut sd,
-            )
-            .ok()
-            .unwrap();
-            let mut text = PWSTR::null();
-            ConvertSecurityDescriptorToStringSecurityDescriptorW(
-                sd,
-                SDDL_REVISION_1,
-                DACL_SECURITY_INFORMATION,
-                &mut text,
-                None,
-            )
-            .unwrap();
-            let sddl = text.to_string().unwrap();
-            LocalFree(Some(HLOCAL(text.0 as _)));
-            LocalFree(Some(HLOCAL(sd.0)));
-            sddl
-        };
-        assert!(sddl.starts_with("D:P"), "{sddl}");
-        assert!(sddl.contains("(A;OICIIO;FA;;;CO)"), "{sddl}");
+        let user_owned = file_with_sddl(
+            "user-owned-dir-check.toml",
+            &format!("O:{}D:P(A;;FA;;;BA)", current_user_sid()),
+        );
+        assert!(!path_owner_is_admin(&user_owned).unwrap());
     }
 
     #[test]

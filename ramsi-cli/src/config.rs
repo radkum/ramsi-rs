@@ -1,10 +1,10 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use shared::{
     DynResult, PipeName,
     constants::{
-        CONFIG_KEY, DEFAULT_LOG_DIR, LOG_DIR_SDDL, MAX_CONTENT_LIMIT, RAMSI_CLSID,
-        RAMSI_PIPE_SUFFIX, RULES_SDDL, config_value::*,
+        CONFIG_KEY, LOG_DIR_SDDL, MAX_CONTENT_LIMIT, RAMSI_CLSID, RAMSI_PIPE_SUFFIX, RULES_SDDL,
+        config_value::*,
     },
 };
 use windows::Win32::{
@@ -71,16 +71,6 @@ pub fn pipe_suffix() -> String {
         .unwrap_or_else(|_| RAMSI_PIPE_SUFFIX.to_string())
 }
 
-pub fn secure_log_dir() -> DynResult<PathBuf> {
-    let dir: PathBuf = hklm()
-        .open_subkey(CONFIG_KEY)
-        .and_then(|key| key.get_value::<String, _>(LOG_DIR))
-        .unwrap_or_else(|_| DEFAULT_LOG_DIR.to_string())
-        .into();
-    secure_dir(&dir)?;
-    Ok(dir)
-}
-
 fn secure_dir(dir: &Path) -> DynResult<()> {
     std::fs::create_dir_all(dir)?;
     secure_path(dir, LOG_DIR_SDDL)
@@ -144,6 +134,12 @@ pub fn set(name: &str, value: &str) -> DynResult<()> {
         _ if name == PIPE => {
             PipeName::from_suffix(value).verify()?;
             key.set_value(name, &value)?;
+        },
+        // providers log only to a dir owned by admins
+        _ if name == LOG_DIR => {
+            let path = std::path::absolute(value)?;
+            secure_dir(&path)?;
+            key.set_value(name, &path.display().to_string())?;
         },
         _ if name == RULES => {
             // providers load only a file that just admins can change

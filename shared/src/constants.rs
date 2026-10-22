@@ -8,7 +8,7 @@ pub const CONFIG_KEY: &str = r"SOFTWARE\Ramsi";
 pub const DEFAULT_LOG_DIR: &str = r"C:\ProgramData\ramsi";
 // admins and SYSTEM: full; users: own files only, no reading others'
 pub const LOG_DIR_SDDL: &str =
-    "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;;0x1000a2;;;AU)(A;OICIIO;FA;;;CO)";
+    "O:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;;0x1000a2;;;AU)(A;OICIIO;FA;;;CO)";
 // owner BA can only be set by an elevated process, providers check it
 pub const PIPE_SDDL: &str =
     "O:BAD:(D;OICI;GA;;;BG)(D;OICI;GA;;;AN)(A;OICI;GRGWGX;;;AU)(A;OICI;GA;;;BA)";

@@ -35,7 +35,7 @@ From an elevated prompt, register the provider with `ramsi-cli.exe`:
 ramsi-cli.exe register --dll ramsi_com.dll
 ```
 
-This also creates the log directory with an ACL that lets users create their own log files but not read other users' ones.
+Registration (also through `regsvr32`) creates the log directory owned by Administrators, with an ACL that lets users create their own log files but not read other users' ones. Providers write logs and dumps only to a directory owned by Administrators or SYSTEM.
 
 Or use the built-in Windows tool:
 ```sh
@@ -83,7 +83,7 @@ ramsi-cli.exe config unset mode
 | `report` | `1` | send detected and suspicious events to the pipe |
 | `apps` | all | `;`-separated app name prefixes to scan, e.g. `PowerShell_` |
 | `log_level` | `info` | `off`, `error`, `warn`, `info`, `debug`, `trace` |
-| `log_dir` | `C:\ProgramData\ramsi` | logs and dumps |
+| `log_dir` | `C:\ProgramData\ramsi` | logs and dumps; `config set log_dir` secures the new directory |
 | `dump` | `0` | write the content of every reported script to `log_dir` |
 | `max_content` | `65536` | bytes of script content sent in an event, at most 2 MiB |
 | `pipe` | `ramsi` | pipe name suffix, `\\.\pipe\<pipe>` |

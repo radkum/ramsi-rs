@@ -45,11 +45,19 @@ pub struct Ramsi {
 impl Ramsi {
     pub fn new() -> Self {
         // read once, when the DLL creates its class factory
-        let config = Config::load();
+        let mut config = Config::load();
         let process_info = ProcessInfo::current();
 
-        if let Err(err) = Self::init_logging(&config, &process_info) {
-            error!("Failed to initialize logging: {err}");
+        if crate::winapi::path_owner_is_admin(&config.log_dir).unwrap_or(false) {
+            if let Err(err) = Self::init_logging(&config, &process_info) {
+                error!("Failed to initialize logging: {err}");
+            }
+        } else {
+            win_log!(
+                "No file logging: {} is not owned by admins, run register",
+                config.log_dir.display()
+            );
+            config.dump = false;
         }
 
         Self {
@@ -85,7 +93,6 @@ impl Ramsi {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let base = format!("amsi-{}-{}", process_info.pid(), process_info.tid());
         let log_dir = &config.log_dir;
-        crate::winapi::create_log_dir(log_dir)?;
 
         let mut logger = Dispatch::new().format(|out, message, record| {
             out.finish(format_args!(
