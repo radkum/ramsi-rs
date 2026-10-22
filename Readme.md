@@ -87,7 +87,7 @@ ramsi-cli.exe config unset mode
 | `dump` | `0` | write the content of every reported script to `log_dir` |
 | `max_content` | `65536` | bytes of script content sent in an event |
 | `pipe` | `ramsi` | pipe name suffix, `\\.\pipe\<pipe>` |
-| `rules` | none | path to a `rules.toml` |
+| `rules` | none | path to a `rules.toml`; `config set rules` makes the file owned and writable by admins only, providers ignore it otherwise |
 
 `rules.toml` extends the built-in lists; every key is optional:
 

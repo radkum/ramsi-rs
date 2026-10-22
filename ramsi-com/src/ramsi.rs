@@ -65,6 +65,14 @@ impl Ramsi {
         let Some(path) = &config.rules else {
             return Rules::default();
         };
+        // a user who can edit the file could allowlist any script
+        if !crate::winapi::only_admins_can_write(path).unwrap_or(false) {
+            error!(
+                "Ignoring rules {}: not owned and writable only by admins",
+                path.display()
+            );
+            return Rules::default();
+        }
         Rules::load(path).unwrap_or_else(|err| {
             error!("Failed to load rules from {}: {err}", path.display());
             Rules::default()

@@ -58,6 +58,40 @@ fn rules_path() -> std::path::PathBuf {
     std::env::temp_dir().join("ramsi-e2e-rules.toml")
 }
 
+// providers ignore a rules file that is not owned by admins
+fn write_admin_file(path: &std::path::Path, content: &str) {
+    use windows::Win32::Storage::FileSystem::{
+        CREATE_NEW, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_GENERIC_WRITE, FILE_SHARE_NONE,
+    };
+
+    let _ = std::fs::remove_file(path);
+    let mut attributes = SECURITY_ATTRIBUTES {
+        nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+        ..Default::default()
+    };
+    unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            &HSTRING::from(shared::constants::RULES_SDDL),
+            SDDL_REVISION_1,
+            &mut attributes.lpSecurityDescriptor as *mut _ as _,
+            None,
+        )
+        .unwrap();
+        let file = CreateFileW(
+            &HSTRING::from(path.as_os_str()),
+            FILE_GENERIC_WRITE.0,
+            FILE_SHARE_NONE,
+            Some(&attributes),
+            CREATE_NEW,
+            FILE_ATTRIBUTE_NORMAL,
+            None,
+        )
+        .unwrap();
+        let _ = windows::Win32::Foundation::CloseHandle(file);
+    }
+    std::fs::write(path, content).unwrap();
+}
+
 fn config() -> RegKey {
     RegKey::predef(HKEY_LOCAL_MACHINE)
         .create_subkey(CONFIG_KEY)
@@ -94,7 +128,10 @@ async fn powershell_is_blocked_and_reported() {
     config().set_value("mode", &"block").unwrap();
     // a keyword only this provider knows, other providers on the machine may block
     // first
-    std::fs::write(rules_path(), format!("blacklist_keywords = [\"{MARKER}\"]")).unwrap();
+    write_admin_file(
+        &rules_path(),
+        &format!("blacklist_keywords = [\"{MARKER}\"]"),
+    );
     config()
         .set_value("rules", &rules_path().display().to_string())
         .unwrap();

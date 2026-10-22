@@ -6,6 +6,9 @@ pub const DEFAULT_LOG_DIR: &str = r"C:\ProgramData\ramsi";
 // and dumps
 pub const LOG_DIR_SDDL: &str =
     "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;;0x1000a2;;;AU)(A;OICIIO;FA;;;CO)";
+// owned by and writable only for SYSTEM and admins, providers ignore a rules
+// file that is not
+pub const RULES_SDDL: &str = "O:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;AU)";
 
 // value names under CONFIG_KEY
 pub mod config_value {
