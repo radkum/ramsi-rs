@@ -8,7 +8,7 @@
 - PowerShell deobfuscation and heuristic scan (keyword lists, embedded C# from `Add-Type`, `powershell -Command`/`-EncodedCommand`, `-Version 2` downgrade)
 - Monitor or block mode, extra rules from a `rules.toml` file
 - CLI tool for registration, configuration and tracing events (`ramsi-cli`)
-- Scan events sent as JSON over a named pipe; the provider only talks to a pipe served by an elevated process
+- Scan events sent as JSON over a named pipe; the provider only talks to a pipe owned by Administrators or SYSTEM
 - Logs and optional dumps in `C:\ProgramData\ramsi`
 - Debug logging via `OutputDebugString` (viewable with [DbgView](https://docs.microsoft.com/en-us/sysinternals/downloads/dbgview))
 - Easy build and distribution via `xtask`
@@ -128,7 +128,7 @@ regsvr32 /u dist\ramsi_com.dll
 cargo test --workspace
 ```
 
-Pipe tests need an elevated prompt. `ramsi-com/tests/samples/{benign,suspicious,detected}` hold sample scripts checked by `tests/samples.rs`. The end-to-end test registers the DLL machine-wide, so run it elevated on a disposable VM only:
+Pipe tests need an elevated prompt; set `RAMSI_TEST_USER` and `RAMSI_TEST_PASSWORD` to a standard local account to also test a client running as another user. `ramsi-com/tests/samples/{benign,suspicious,detected}` hold sample scripts checked by `tests/samples.rs`. The end-to-end test registers the DLL machine-wide, so run it elevated on a disposable VM only:
 
 ```sh
 cargo test -p ramsi-com --test e2e -- --ignored

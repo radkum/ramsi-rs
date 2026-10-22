@@ -13,7 +13,7 @@ use tokio::{
 };
 use windows::Win32::Foundation::HANDLE;
 
-use crate::winapi::pipe_server_is_elevated;
+use crate::winapi::pipe_owner_is_admin;
 
 #[derive(Error, Debug)]
 pub enum PipeClientError {
@@ -32,7 +32,7 @@ pub enum PipeClientError {
     #[error("Reconnect postponed after a timeout")]
     Backoff,
 
-    #[error("Pipe \"{0}\" is not served by an elevated process")]
+    #[error("Pipe \"{0}\" is not owned by Administrators or SYSTEM")]
     UntrustedServer(String),
 }
 pub type PipeClientResult<T> = Result<T, PipeClientError>;
@@ -79,7 +79,7 @@ impl PipeClient {
         let pipe = ClientOptions::new()
             .open(&self.pipe_name)
             .map_err(|err| PipeClientError::FailedToConnect(err, self.pipe_name.clone()))?;
-        if !pipe_server_is_elevated(HANDLE(pipe.as_raw_handle())).unwrap_or(false) {
+        if !pipe_owner_is_admin(HANDLE(pipe.as_raw_handle())).unwrap_or(false) {
             self.retry_at = Some(Instant::now() + RECONNECT_BACKOFF);
             return Err(PipeClientError::UntrustedServer(self.pipe_name.clone()));
         }
@@ -127,7 +127,7 @@ impl PipeClient {
 
 #[cfg(test)]
 mod tests {
-    use tokio::net::windows::named_pipe::ServerOptions;
+    use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 
     use super::*;
 
@@ -147,7 +147,7 @@ mod tests {
     #[tokio::test]
     async fn send_times_out_and_resets_when_server_does_not_read() {
         let name = pipe_name("stalled");
-        let _server = ServerOptions::new().create(&name).unwrap();
+        let _server = admin_server(&name);
         let mut client = PipeClient::new(&name);
         client.connect().unwrap();
 
@@ -161,13 +161,118 @@ mod tests {
     #[tokio::test]
     async fn send_resets_when_server_is_gone() {
         let name = pipe_name("gone");
-        let server = ServerOptions::new().create(&name).unwrap();
+        let server = admin_server(&name);
         let mut client = PipeClient::new(&name);
         client.connect().unwrap();
         drop(server);
 
         assert!(send_until_error(&mut client).await.is_err());
         assert!(!client.active());
+    }
+
+    // the security descriptor ramsi-cli uses
+    fn admin_server(name: &str) -> NamedPipeServer {
+        use windows::Win32::Security::{
+            Authorization::{
+                ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+            },
+            SECURITY_ATTRIBUTES,
+        };
+
+        let mut attributes = SECURITY_ATTRIBUTES {
+            nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+            ..Default::default()
+        };
+        unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                windows_core::w!("O:BAD:(A;OICI;GA;;;BA)(A;OICI;GRGWGX;;;AU)"),
+                SDDL_REVISION_1,
+                &mut attributes.lpSecurityDescriptor as *mut _ as _,
+                None,
+            )
+            .unwrap();
+            ServerOptions::new()
+                .create_with_security_attributes_raw(name, &mut attributes as *mut _ as _)
+                .unwrap()
+        }
+    }
+
+    // an elevated server seen by a client impersonating `token`
+    fn connect_impersonating(token: windows::Win32::Foundation::HANDLE) -> PipeClientResult<()> {
+        use windows::Win32::Security::{ImpersonateLoggedOnUser, RevertToSelf};
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let _guard = rt.enter();
+        let name = pipe_name(&format!("client-{}", token.0 as usize));
+        let _server = admin_server(&name);
+        unsafe {
+            ImpersonateLoggedOnUser(token).unwrap();
+            let res = PipeClient::new(&name).connect();
+            RevertToSelf().unwrap();
+            res
+        }
+    }
+
+    #[test]
+    fn accepts_elevated_server_from_lua_client() {
+        use windows::Win32::{
+            Foundation::{CloseHandle, HANDLE},
+            Security::{
+                CreateRestrictedToken, LUA_TOKEN, TOKEN_ASSIGN_PRIMARY, TOKEN_DUPLICATE,
+                TOKEN_IMPERSONATE, TOKEN_QUERY,
+            },
+            System::Threading::{GetCurrentProcess, OpenProcessToken},
+        };
+
+        let res = unsafe {
+            let mut token = HANDLE::default();
+            OpenProcessToken(
+                GetCurrentProcess(),
+                TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY | TOKEN_IMPERSONATE,
+                &mut token,
+            )
+            .unwrap();
+            let mut lua = HANDLE::default();
+            CreateRestrictedToken(token, LUA_TOKEN, None, None, None, &mut lua).unwrap();
+            let res = connect_impersonating(lua);
+            let _ = CloseHandle(lua);
+            let _ = CloseHandle(token);
+            res
+        };
+        assert!(res.is_ok(), "{res:?}");
+    }
+
+    // needs a standard local account: RAMSI_TEST_USER, RAMSI_TEST_PASSWORD
+    #[test]
+    fn accepts_elevated_server_from_other_user() {
+        use windows::Win32::{
+            Foundation::{CloseHandle, HANDLE},
+            Security::{LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, LogonUserW},
+        };
+
+        let (Ok(user), Ok(password)) = (
+            std::env::var("RAMSI_TEST_USER"),
+            std::env::var("RAMSI_TEST_PASSWORD"),
+        ) else {
+            eprintln!("SKIPPED: RAMSI_TEST_USER and RAMSI_TEST_PASSWORD not set");
+            return;
+        };
+        let res = unsafe {
+            let mut token = HANDLE::default();
+            LogonUserW(
+                &windows_core::HSTRING::from(user),
+                windows_core::w!("."),
+                &windows_core::HSTRING::from(password),
+                LOGON32_LOGON_INTERACTIVE,
+                LOGON32_PROVIDER_DEFAULT,
+                &mut token,
+            )
+            .unwrap();
+            let res = connect_impersonating(token);
+            let _ = CloseHandle(token);
+            res
+        };
+        assert!(res.is_ok(), "{res:?}");
     }
 
     // a pipe server started with a non-elevated (LUA) copy of our token
@@ -280,13 +385,13 @@ mod tests {
     #[tokio::test]
     async fn reconnects_without_backoff_after_broken_pipe() {
         let name = pipe_name("broken");
-        let server = ServerOptions::new().create(&name).unwrap();
+        let server = admin_server(&name);
         let mut client = PipeClient::new(&name);
         client.connect().unwrap();
         drop(server);
         assert!(send_until_error(&mut client).await.is_err());
 
-        let _server = ServerOptions::new().create(&name).unwrap();
+        let _server = admin_server(&name);
         client.connect().unwrap();
     }
 }
