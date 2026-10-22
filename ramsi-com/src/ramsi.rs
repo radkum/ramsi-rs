@@ -77,7 +77,7 @@ impl Ramsi {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let base = format!("amsi-{}-{}", process_info.pid(), process_info.tid());
         let log_dir = &config.log_dir;
-        std::fs::create_dir_all(log_dir)?;
+        crate::winapi::create_log_dir(log_dir)?;
 
         let mut logger = Dispatch::new().format(|out, message, record| {
             out.finish(format_args!(
