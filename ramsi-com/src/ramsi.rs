@@ -194,3 +194,13 @@ impl Ramsi_Impl {
         Ramsi::new().into_static()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clsid_matches_shared_constant() {
+        assert!(Ramsi::IID().eq_ignore_ascii_case(shared::constants::RAMSI_CLSID));
+    }
+}
