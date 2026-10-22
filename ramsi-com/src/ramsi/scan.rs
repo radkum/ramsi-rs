@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, sync::PoisonError};
 
 use cs_parser::CSharpSession;
 use log::debug;
@@ -66,13 +66,15 @@ impl Ramsi_Impl {
         let tokens_res: DynResult<Tokens> = match script_type {
             ScriptType::PsCommand => self
                 .ps_session
-                .borrow_mut()
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
                 .parse_command(&script_content)
                 .map_err(|err| err.into())
                 .and_then(|script_res| Self::extract_tokens(script_res)),
             ScriptType::PsScript => self
                 .ps_session
-                .borrow_mut()
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
                 .parse_script(&script_content)
                 .map_err(|err| err.into())
                 .and_then(|script_res| Self::extract_tokens(script_res)),
@@ -327,5 +329,22 @@ mod tests {
             ramsi.scan_script("prompt".to_string(), ScriptType::PsCommand),
             ScanStatus::Clean
         );
+    }
+
+    #[test]
+    fn concurrent_scans() {
+        let ramsi = Ramsi::new().into_static();
+        std::thread::scope(|s| {
+            for _ in 0..8 {
+                s.spawn(|| {
+                    for _ in 0..20 {
+                        ramsi.scan_script(
+                            "Get-Process | Out-Null".to_string(),
+                            ScriptType::PsCommand,
+                        );
+                    }
+                });
+            }
+        });
     }
 }
