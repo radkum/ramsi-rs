@@ -149,7 +149,7 @@ mod tests {
     use super::*;
 
     // a file under target/acl-test-rules created with `sddl`
-    fn file_with_sddl(name: &str, sddl: Option<&str>) -> std::path::PathBuf {
+    fn file_with_sddl(name: &str, sddl: &str) -> std::path::PathBuf {
         use windows::Win32::Storage::FileSystem::{
             CREATE_NEW, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_GENERIC_WRITE, FILE_SHARE_NONE,
         };
@@ -163,15 +163,13 @@ mod tests {
             ..Default::default()
         };
         unsafe {
-            if let Some(sddl) = sddl {
-                ConvertStringSecurityDescriptorToSecurityDescriptorW(
-                    &HSTRING::from(sddl),
-                    SDDL_REVISION_1,
-                    &mut attributes.lpSecurityDescriptor as *mut _ as _,
-                    None,
-                )
-                .unwrap();
-            }
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                &HSTRING::from(sddl),
+                SDDL_REVISION_1,
+                &mut attributes.lpSecurityDescriptor as *mut _ as _,
+                None,
+            )
+            .unwrap();
             let file = CreateFileW(
                 &HSTRING::from(path.as_os_str()),
                 FILE_GENERIC_WRITE.0,
@@ -187,16 +185,51 @@ mod tests {
         path
     }
 
+    fn current_user_sid() -> String {
+        use windows::Win32::{
+            Security::{
+                Authorization::ConvertSidToStringSidW, GetTokenInformation, TOKEN_QUERY,
+                TOKEN_USER, TokenUser,
+            },
+            System::Threading::{GetCurrentProcess, OpenProcessToken},
+        };
+        use windows_core::PWSTR;
+
+        unsafe {
+            let mut token = HANDLE::default();
+            OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).unwrap();
+            let mut buf = vec![0u8; 256];
+            let mut size = 0;
+            GetTokenInformation(
+                token,
+                TokenUser,
+                Some(buf.as_mut_ptr() as _),
+                buf.len() as u32,
+                &mut size,
+            )
+            .unwrap();
+            let _ = windows::Win32::Foundation::CloseHandle(token);
+            let user = &*(buf.as_ptr() as *const TOKEN_USER);
+            let mut text = PWSTR::null();
+            ConvertSidToStringSidW(user.User.Sid, &mut text).unwrap();
+            let sid = text.to_string().unwrap();
+            LocalFree(Some(HLOCAL(text.0 as _)));
+            sid
+        }
+    }
+
     #[test]
     fn rules_file_must_be_admin_owned_and_admin_writable() {
-        let secure = file_with_sddl("secure.toml", Some(shared::constants::RULES_SDDL));
+        let secure = file_with_sddl("secure.toml", shared::constants::RULES_SDDL);
         assert!(only_admins_can_write(&secure).unwrap());
 
-        let users_write =
-            file_with_sddl("users-write.toml", Some("O:BAD:P(A;;FA;;;BA)(A;;FW;;;AU)"));
+        let users_write = file_with_sddl("users-write.toml", "O:BAD:P(A;;FA;;;BA)(A;;FW;;;AU)");
         assert!(!only_admins_can_write(&users_write).unwrap());
 
-        let user_owned = file_with_sddl("user-owned.toml", None);
+        let user_owned = file_with_sddl(
+            "user-owned.toml",
+            &format!("O:{}D:P(A;;FA;;;BA)", current_user_sid()),
+        );
         assert!(!only_admins_can_write(&user_owned).unwrap());
     }
 
