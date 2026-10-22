@@ -8,9 +8,8 @@ mod scan;
 
 use core::result::Result;
 use std::{
-    cell::RefCell,
     path::Path,
-    sync::{Arc, atomic::AtomicU32},
+    sync::{Arc, Mutex, atomic::AtomicU32},
 };
 
 use antimalware::{PsVersion, ScriptType};
@@ -36,7 +35,7 @@ unsafe trait IRamsi: IAntimalwareProvider2 {}
 #[implement(IRamsi, IClassFactory)]
 
 pub struct Ramsi {
-    ps_session: RefCell<PowerShellSession>,
+    ps_session: Mutex<PowerShellSession>,
     process_info: ProcessInfo,
     request_number: AtomicU32,
     pipe_client: Arc<RwLock<PipeClient>>,
@@ -72,7 +71,7 @@ impl Ramsi {
         };
 
         Self {
-            ps_session: RefCell::new(PowerShellSession::new().with_variables(Variables::env())),
+            ps_session: Mutex::new(PowerShellSession::new().with_variables(Variables::env())),
             process_info,
             request_number: AtomicU32::new(0),
             pipe_client: Arc::new(RwLock::new(PipeClient::new(&pipe_name))),
