@@ -1,5 +1,4 @@
 #![allow(non_snake_case)]
-#![allow(static_mut_refs)]
 
 mod amsi_utils;
 mod ramsi;
@@ -21,12 +20,12 @@ pub const DLL_PROCESS_DETACH: u32 = 0u32;
 pub const DLL_THREAD_ATTACH: u32 = 2u32;
 pub const DLL_THREAD_DETACH: u32 = 3u32;
 
-use std::path::Path;
+use std::{path::Path, sync::OnceLock};
 
 use windows_core::{GUID, PCWSTR};
 use winreg::{RegKey, enums::*};
 
-static mut MODULE_NAME: Option<String> = None;
+static MODULE_NAME: OnceLock<String> = OnceLock::new();
 
 #[unsafe(no_mangle)]
 pub extern "system" fn DllMain(module: HMODULE, reason: Dword, reserved: Lpvoid) -> bool {
@@ -34,19 +33,14 @@ pub extern "system" fn DllMain(module: HMODULE, reason: Dword, reserved: Lpvoid)
         DLL_PROCESS_ATTACH => {
             win_log!("DLL_PROCESS_ATTACH");
 
-            unsafe {
-                MODULE_NAME = Some(winapi::get_curr_module_file_name(module));
-                if let Err(err) = DisableThreadLibraryCalls(module) {
-                    win_log!("Failed to disable thread library calls: {:?}", err);
-                }
+            let _ = MODULE_NAME.set(winapi::get_curr_module_file_name(module));
+            if let Err(err) = unsafe { DisableThreadLibraryCalls(module) } {
+                win_log!("Failed to disable thread library calls: {:?}", err);
             }
         },
-        // process exit: other threads are gone and teardown under the loader lock may hang
-        DLL_PROCESS_DETACH if !reserved.is_null() => win_log!("DLL_PROCESS_DETACH (process exit)"),
+        // no teardown under the loader lock: the class factory is never released
         DLL_PROCESS_DETACH => {
-            win_log!("DLL_PROCESS_DETACH");
-            let result = Ramsi_Impl::terminate();
-            win_log!("Ramsi_Impl::terminate result: {}", result);
+            win_log!("DLL_PROCESS_DETACH (process exit: {})", !reserved.is_null())
         },
         DLL_THREAD_ATTACH => win_log!("DLL_THREAD_ATTACH"),
         _ => win_log!("unknown reason"),
@@ -136,8 +130,7 @@ fn imp_register_server(pipe_suffix: Option<String>) -> Result<(), Box<dyn std::e
         REG_OPENED_EXISTING_KEY => win_log!("An existing key has been opened"),
     }
 
-    let module_name = unsafe { MODULE_NAME.clone() };
-    key.set_value("", &module_name.unwrap_or_default())?;
+    key.set_value("", &MODULE_NAME.get().cloned().unwrap_or_default())?;
     key.set_value("ThreadingModel", &"Both")?;
 
     //set amsi provider

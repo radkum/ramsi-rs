@@ -9,7 +9,7 @@ mod scan;
 use core::result::Result;
 use std::{
     path::Path,
-    sync::{Arc, Once, atomic::AtomicU32},
+    sync::{Arc, OnceLock, atomic::AtomicU32},
 };
 
 use antimalware::PsVersion;
@@ -28,9 +28,8 @@ use windows_core::*;
 use winreg::{RegKey, enums::*};
 
 use crate::utils::ProcessInfo;
-pub(super) static mut CLASS_FACTORY: Option<StaticComObject<Ramsi>> = None;
 // created lazily: heavy init is not allowed under the loader lock in DllMain
-static CLASS_FACTORY_INIT: Once = Once::new();
+static CLASS_FACTORY: OnceLock<StaticComObject<Ramsi>> = OnceLock::new();
 
 #[interface("b8614e83-84ac-45fb-82a8-21711aaf07f2")]
 unsafe trait IRamsi: IAntimalwareProvider2 {}
@@ -176,8 +175,6 @@ impl Ramsi_Impl {
             return windows_core::HRESULT(-2147221231); // E_NOINTERFACE
         }
 
-        CLASS_FACTORY_INIT.call_once(Self::create);
-
         if let Err(r) = Self::query_interface(iid, interface) {
             debug!("Ramsi_Impl::get_class_object: {:?}", r);
             return r.into();
@@ -189,11 +186,7 @@ impl Ramsi_Impl {
         iid: *const windows_core::GUID,
         interface: *mut *mut std::ffi::c_void,
     ) -> windows_core::Result<()> {
-        let class_factory = unsafe { CLASS_FACTORY.as_ref() };
-        let Some(class_factory) = class_factory else {
-            debug!("Ramsi_Impl::get_class_object: CLASS_FACTORY is None");
-            return Err(windows_core::HRESULT(-1).into());
-        };
+        let class_factory = CLASS_FACTORY.get_or_init(Self::create);
         let hr = unsafe { class_factory.QueryInterface(iid, interface) };
         if hr.is_err() {
             debug!("Ramsi_Impl::query_interface: {:?}", hr);
@@ -203,21 +196,10 @@ impl Ramsi_Impl {
         Ok(())
     }
 
-    pub fn create() {
+    fn create() -> StaticComObject<Ramsi> {
         debug!("Ramsi_Impl::create");
         // the default hook prints to the host's stderr
         std::panic::set_hook(Box::new(|info| error!("{info}")));
-        unsafe { CLASS_FACTORY = Some(Ramsi::new().into_static()) };
-    }
-
-    pub fn terminate() -> bool {
-        let class_factory = unsafe { CLASS_FACTORY.take() };
-        let Some(class_factory) = class_factory else {
-            debug!("Ramsi_Impl::get_class_object: CLASS_FACTORY is None");
-            return false;
-        };
-        let released = class_factory.count.release();
-        debug!("Remaining: {released}");
-        released == 0
+        Ramsi::new().into_static()
     }
 }
