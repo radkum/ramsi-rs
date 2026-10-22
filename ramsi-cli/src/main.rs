@@ -81,7 +81,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Register { dll, pipe } => {
             let pipe = pipe_suffix(pipe)?;
             ComWrapper::new(&dll)?.register(&pipe)?;
-            println!("Log dir: {}", config::secure_log_dir()?.display());
         },
         Command::Unregister { dll } => {
             ComWrapper::new(&dll)?.unregister()?;
@@ -94,13 +93,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             filter,
         } => {
             let pipe = pipe_suffix(pipe)?;
-            let _ramsi_wrapper = if register {
-                let wrapper = RamsiComWrapper::new(&dll, &pipe)?;
-                config::secure_log_dir()?;
-                Some(wrapper)
-            } else {
-                None
-            };
+            let _ramsi_wrapper = register
+                .then(|| RamsiComWrapper::new(&dll, &pipe))
+                .transpose()?;
             let output = Output {
                 json,
                 filter: filter.map(|f| f.to_lowercase()),

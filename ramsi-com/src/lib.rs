@@ -125,6 +125,7 @@ fn imp_register_server(pipe_suffix: Option<String>) -> Result<(), Box<dyn std::e
 
     let (key, _) = hklm.create_subkey(CONFIG_KEY)?;
     key.set_value(config_value::PIPE, &pipe_name.suffix())?;
+    winapi::secure_log_dir(&config::Config::load().log_dir)?;
 
     // set InProcServer32
     let inproc_path = uuid_path.join("InProcServer32");
