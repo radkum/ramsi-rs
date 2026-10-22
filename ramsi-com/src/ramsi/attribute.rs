@@ -101,10 +101,7 @@ impl Ramsi_Impl {
         AmsiString::from(out_buf).into()
     }
 
-    pub(super) fn get_script_type(s: &IAmsiStream) -> ScriptType {
-        let content_name = Self::string_attribute(s, AMSI_ATTRIBUTE_CONTENT_NAME);
-        let app_name = Self::string_attribute(s, AMSI_ATTRIBUTE_APP_NAME);
-
+    pub(super) fn get_script_type(app_name: &str, content_name: &str) -> ScriptType {
         if !app_name.to_ascii_lowercase().starts_with("powershell_") {
             //it's not powershell, eval primitive
             ScriptType::Other
