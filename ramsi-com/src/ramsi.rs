@@ -87,6 +87,7 @@ impl Ramsi {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let base = format!("amsi-{}-{}", process_info.pid(), process_info.tid());
         let log_dir = "C:\\ramsi";
+        std::fs::create_dir_all(log_dir)?;
 
         let mut logger = Dispatch::new().format(|out, message, record| {
             out.finish(format_args!(
@@ -102,7 +103,7 @@ impl Ramsi {
         logger = logger.chain(
             Dispatch::new()
                 .level(LevelFilter::Off)
-                .level_for("ramsi-com", log_level)
+                .level_for(env!("CARGO_CRATE_NAME"), log_level)
                 .chain(fern::DateBased::new(
                     log_dir,
                     format!("/{base}-%Y-%m-%d.log"),
@@ -219,3 +220,4 @@ impl Ramsi_Impl {
         released == 0
     }
 }
+
