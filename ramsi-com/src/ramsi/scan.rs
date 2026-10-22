@@ -111,7 +111,12 @@ impl Scanner {
         let tokens = tokens_res.unwrap_or_else(|err| {
             debug!("Failed to parse script: {err}");
             let string_set: BTreeSet<String> = Self::tokenize(script_content);
-            let functions_and_commands = string_set.clone();
+            // any word can be a call here, so skip telemetry functions like run or start
+            let functions_and_commands = string_set
+                .iter()
+                .filter(|s| self.rules.blacklist_functions.contains(s))
+                .cloned()
+                .collect();
             let ttypes = string_set.clone();
 
             Tokens {
@@ -504,6 +509,18 @@ mod tests {
             status(&format!("Add-Type x; powershell -e {encoded}; Get-Date")),
             ScanStatus::Detected
         );
+    }
+
+    #[test]
+    fn fallback_does_not_match_common_words_as_functions() {
+        let scanner = Scanner::default();
+        let scan = |s| scanner.scan(s, ScriptType::Other).status;
+        assert_eq!(
+            scan("Start the Run, then Free the Token"),
+            ScanStatus::NotDetected
+        );
+        assert_eq!(scan("AmsiInitialize(ctx)"), ScanStatus::Detected);
+        assert_eq!(scan("LoadLibrary('amsi.dll')"), ScanStatus::Detected);
     }
 
     #[test]
