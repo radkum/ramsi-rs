@@ -167,8 +167,8 @@ mod tests {
 
     #[test]
     fn compile_sha256_set() {
-        for i in 0..SHA256_STRINGS.len() {
-            assert!(SHA256_HEX.contains(&<[u8; 32]>::from_hex(SHA256_STRINGS[i]).unwrap()));
+        for s in SHA256_STRINGS {
+            assert!(SHA256_HEX.contains(&<[u8; 32]>::from_hex(s).unwrap()));
         }
     }
 }
