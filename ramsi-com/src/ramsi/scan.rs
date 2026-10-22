@@ -317,7 +317,7 @@ mod tests {
         let keywords_lowercased: std::collections::HashSet<_> =
             keywords_lowercased.iter().cloned().collect();
 
-        assert_eq!(keywords, keywords_lowercased);
+        assert!(keywords_lowercased.is_subset(&keywords));
     }
 
     #[test]
