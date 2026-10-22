@@ -39,6 +39,8 @@ impl From<time::error::Elapsed> for PipeClientError {
     }
 }
 
+const SEND_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
+
 pub struct PipeClient {
     pub pipe: Option<NamedPipeClient>,
     pub pipe_name: String,
@@ -70,7 +72,12 @@ impl PipeClient {
         message: M,
     ) -> Result<(), PipeClientError> {
         if let Some(ref mut pipe) = self.pipe {
-            Self::send_internal(pipe, message.clone()).await?;
+            let res = time::timeout(SEND_TIMEOUT, Self::send_internal(pipe, message.clone())).await;
+            if !matches!(res, Ok(Ok(()))) {
+                // broken or stalled pipe, reconnect on next send
+                self.pipe = None;
+            }
+            res??;
             Ok(())
         } else {
             Err(PipeClientError::NotActive)
@@ -88,5 +95,43 @@ impl PipeClient {
         pipe.write_u64(buffer.len() as _).await?;
         pipe.write_all(&buffer).await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::net::windows::named_pipe::ServerOptions;
+
+    use super::*;
+
+    fn pipe_name(test: &str) -> String {
+        format!(r"\\.\pipe\ramsi-test-{test}-{}", std::process::id())
+    }
+
+    #[tokio::test]
+    async fn send_times_out_and_resets_when_server_does_not_read() {
+        let name = pipe_name("stalled");
+        let _server = ServerOptions::new().create(&name).unwrap();
+        let mut client = PipeClient::new(&name);
+        client.connect().unwrap();
+
+        // first write is buffered by the runtime, the next one waits for it
+        client.send("x".repeat(1 << 20)).await.unwrap();
+        let res = client.send("x".repeat(1 << 20)).await;
+
+        assert!(matches!(res, Err(PipeClientError::Timeout)), "{res:?}");
+        assert!(!client.active());
+    }
+
+    #[tokio::test]
+    async fn send_resets_when_server_is_gone() {
+        let name = pipe_name("gone");
+        let server = ServerOptions::new().create(&name).unwrap();
+        let mut client = PipeClient::new(&name);
+        client.connect().unwrap();
+        drop(server);
+
+        assert!(client.send("x").await.is_err());
+        assert!(!client.active());
     }
 }
