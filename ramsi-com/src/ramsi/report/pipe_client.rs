@@ -1,4 +1,7 @@
-use std::time::{Duration, Instant};
+use std::{
+    os::windows::io::AsRawHandle,
+    time::{Duration, Instant},
+};
 
 use serde::Serialize;
 use serde_json::to_vec;
@@ -8,6 +11,9 @@ use tokio::{
     net::windows::named_pipe::{ClientOptions, NamedPipeClient},
     time,
 };
+use windows::Win32::Foundation::HANDLE;
+
+use crate::winapi::pipe_server_is_elevated;
 
 #[derive(Error, Debug)]
 pub enum PipeClientError {
@@ -25,6 +31,9 @@ pub enum PipeClientError {
 
     #[error("Reconnect postponed after a timeout")]
     Backoff,
+
+    #[error("Pipe \"{0}\" is not served by an elevated process")]
+    UntrustedServer(String),
 }
 pub type PipeClientResult<T> = Result<T, PipeClientError>;
 
@@ -67,11 +76,14 @@ impl PipeClient {
         if self.retry_at.is_some_and(|t| Instant::now() < t) {
             return Err(PipeClientError::Backoff);
         }
-        self.pipe = Some(
-            ClientOptions::new()
-                .open(&self.pipe_name)
-                .map_err(|err| PipeClientError::FailedToConnect(err, self.pipe_name.clone()))?,
-        );
+        let pipe = ClientOptions::new()
+            .open(&self.pipe_name)
+            .map_err(|err| PipeClientError::FailedToConnect(err, self.pipe_name.clone()))?;
+        if !pipe_server_is_elevated(HANDLE(pipe.as_raw_handle())).unwrap_or(false) {
+            self.retry_at = Some(Instant::now() + RECONNECT_BACKOFF);
+            return Err(PipeClientError::UntrustedServer(self.pipe_name.clone()));
+        }
+        self.pipe = Some(pipe);
         Ok(())
     }
 
@@ -156,6 +168,103 @@ mod tests {
 
         assert!(send_until_error(&mut client).await.is_err());
         assert!(!client.active());
+    }
+
+    // a pipe server started with a non-elevated (LUA) copy of our token
+    #[test]
+    fn rejects_server_that_is_not_elevated() {
+        use windows::{
+            Win32::{
+                Foundation::{CloseHandle, HANDLE},
+                Security::{
+                    CreateRestrictedToken, LUA_TOKEN, TOKEN_ADJUST_DEFAULT, TOKEN_ADJUST_SESSIONID,
+                    TOKEN_ASSIGN_PRIMARY, TOKEN_DUPLICATE, TOKEN_QUERY,
+                },
+                System::{
+                    Pipes::WaitNamedPipeW,
+                    Threading::{
+                        CREATE_NO_WINDOW, CreateProcessAsUserW, GetCurrentProcess,
+                        OpenProcessToken, PROCESS_INFORMATION, STARTUPINFOW, TerminateProcess,
+                    },
+                },
+            },
+            core::{HSTRING, PWSTR},
+        };
+
+        let name = pipe_name("untrusted");
+        let script = format!(
+            "$p = New-Object IO.Pipes.NamedPipeServerStream('{}'); $p.WaitForConnection(); \
+             Start-Sleep 30",
+            name.trim_start_matches(r"\\.\pipe\")
+        );
+        let mut cmd: Vec<u16> =
+            format!("powershell.exe -NoProfile -NonInteractive -Command \"{script}\"\0")
+                .encode_utf16()
+                .collect();
+
+        let process = unsafe {
+            let mut token = HANDLE::default();
+            OpenProcessToken(
+                GetCurrentProcess(),
+                TOKEN_QUERY
+                    | TOKEN_DUPLICATE
+                    | TOKEN_ASSIGN_PRIMARY
+                    | TOKEN_ADJUST_DEFAULT
+                    | TOKEN_ADJUST_SESSIONID,
+                &mut token,
+            )
+            .unwrap();
+            let mut lua = HANDLE::default();
+            CreateRestrictedToken(token, LUA_TOKEN, None, None, None, &mut lua).unwrap();
+            let startup = STARTUPINFOW {
+                cb: size_of::<STARTUPINFOW>() as u32,
+                ..Default::default()
+            };
+            let mut info = PROCESS_INFORMATION::default();
+            CreateProcessAsUserW(
+                Some(lua),
+                None,
+                Some(PWSTR(cmd.as_mut_ptr())),
+                None,
+                None,
+                false,
+                CREATE_NO_WINDOW,
+                None,
+                None,
+                &startup,
+                &mut info,
+            )
+            .unwrap();
+            let _ = CloseHandle(info.hThread);
+            let _ = CloseHandle(lua);
+            let _ = CloseHandle(token);
+            info.hProcess
+        };
+
+        let pipe = HSTRING::from(name.as_str());
+        let ready = (0..300).any(|_| {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            unsafe { WaitNamedPipeW(&pipe, 0) }.as_bool()
+        });
+
+        let res = ready.then(|| {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let _guard = rt.enter();
+            let mut client = PipeClient::new(&name);
+            let res = client.connect();
+            (res, client.active())
+        });
+        unsafe {
+            let _ = TerminateProcess(process, 1);
+            let _ = CloseHandle(process);
+        }
+
+        let (res, active) = res.expect("pipe server did not start");
+        assert!(
+            matches!(res, Err(PipeClientError::UntrustedServer(_))),
+            "{res:?}"
+        );
+        assert!(!active);
     }
 
     #[tokio::test]
