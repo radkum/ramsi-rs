@@ -295,11 +295,14 @@ impl Scanner {
                         if arg_name == "-command" {
                             return cmd.args().get(i + 1).map(|s| s.to_ascii_lowercase());
                         } else if arg_name == "-version" {
-                            let ps_version =
-                                cmd.args().get(i + 1).and_then(|s| s.parse::<u32>().ok());
+                            // major version of "2", "2.0", "5.1"
+                            let ps_version = cmd
+                                .args()
+                                .get(i + 1)
+                                .and_then(|s| s.split('.').next()?.parse::<u32>().ok());
                             powershell_version = match ps_version {
-                                Some(2) => Some(PsVersion::V2),
-                                Some(3) => Some(PsVersion::V3AndAbove),
+                                Some(..=2) => Some(PsVersion::V2),
+                                Some(3..) => Some(PsVersion::V3AndAbove),
                                 _ => Some(PsVersion::Unknown),
                             };
                         }
@@ -410,6 +413,16 @@ mod tests {
     fn commands_match_case_insensitively() {
         assert_eq!(status("AmsiInitialize 1"), ScanStatus::Detected);
         assert_eq!(status("Add-Type -AssemblyName x"), ScanStatus::Suspicious);
+    }
+
+    #[test]
+    fn powershell_version_3_and_above_is_not_suspicious() {
+        assert_eq!(
+            status("powershell -version 5 -NoProfile"),
+            ScanStatus::NotDetected
+        );
+        assert_eq!(status("powershell -version 7.4"), ScanStatus::NotDetected);
+        assert_eq!(status("powershell -version 2.0"), ScanStatus::Suspicious);
     }
 
     #[test]
