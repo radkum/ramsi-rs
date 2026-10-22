@@ -66,16 +66,27 @@ impl Ramsi_Impl {
         let mut out_buf = vec![0; content_size];
 
         if content_ptr.is_null() {
-            // content is not in memory, it must be read from the stream
-            let mut read_size: u32 = 0;
-            if let Err(err) = unsafe { s.Read(0, out_buf.as_mut_slice(), &mut read_size) } {
-                error!(
-                    "IAmsiStream::Read error: 0x{:08x}, msg: {}",
-                    err.code().0,
-                    err.message()
-                );
+            // not in memory: read it from the stream, possibly in chunks
+            let mut total = 0;
+            while total < content_size {
+                let end = content_size.min(total + u32::MAX as usize);
+                let mut read_size: u32 = 0;
+                if let Err(err) =
+                    unsafe { s.Read(total as u64, &mut out_buf[total..end], &mut read_size) }
+                {
+                    error!(
+                        "IAmsiStream::Read error: 0x{:08x}, msg: {}",
+                        err.code().0,
+                        err.message()
+                    );
+                    break;
+                }
+                if read_size == 0 {
+                    break;
+                }
+                total += read_size as usize;
             }
-            out_buf.truncate(read_size as usize);
+            out_buf.truncate(total);
         } else {
             unsafe {
                 std::ptr::copy_nonoverlapping(
@@ -117,6 +128,7 @@ mod tests {
     struct MockStream {
         content: Vec<u8>,
         in_memory: bool,
+        read_chunk: usize,
     }
 
     impl IAmsiStream_Impl for MockStream_Impl {
@@ -161,7 +173,7 @@ mod tests {
             readsize: *mut u32,
         ) -> windows_core::Result<()> {
             let src = &self.content[position as usize..];
-            let len = src.len().min(size as usize);
+            let len = src.len().min(size as usize).min(self.read_chunk);
             unsafe {
                 std::ptr::copy_nonoverlapping(src.as_ptr(), buffer, len);
                 *readsize = len as u32;
@@ -171,8 +183,17 @@ mod tests {
     }
 
     fn stream(script: &str, in_memory: bool) -> IAmsiStream {
+        chunked_stream(script, in_memory, usize::MAX)
+    }
+
+    fn chunked_stream(script: &str, in_memory: bool, read_chunk: usize) -> IAmsiStream {
         let content = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
-        MockStream { content, in_memory }.into()
+        MockStream {
+            content,
+            in_memory,
+            read_chunk,
+        }
+        .into()
     }
 
     #[test]
@@ -188,6 +209,15 @@ mod tests {
         assert_eq!(
             Ramsi_Impl::get_content(&stream("Get-Process", false)),
             "Get-Process"
+        );
+    }
+
+    #[test]
+    fn content_from_chunked_reads() {
+        let script = "Get-Process | Where-Object { $_.CPU -gt 10 }";
+        assert_eq!(
+            Ramsi_Impl::get_content(&chunked_stream(script, false, 7)),
+            script
         );
     }
 
