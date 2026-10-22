@@ -143,6 +143,40 @@ pub fn pipe_owner_is_admin(pipe: HANDLE) -> Result<bool> {
 }
 
 #[cfg(test)]
+pub(crate) fn current_user_sid() -> String {
+    use windows::Win32::{
+        Security::{
+            Authorization::ConvertSidToStringSidW, GetTokenInformation, TOKEN_QUERY, TOKEN_USER,
+            TokenUser,
+        },
+        System::Threading::{GetCurrentProcess, OpenProcessToken},
+    };
+    use windows_core::PWSTR;
+
+    unsafe {
+        let mut token = HANDLE::default();
+        OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).unwrap();
+        let mut buf = vec![0u8; 256];
+        let mut size = 0;
+        GetTokenInformation(
+            token,
+            TokenUser,
+            Some(buf.as_mut_ptr() as _),
+            buf.len() as u32,
+            &mut size,
+        )
+        .unwrap();
+        let _ = windows::Win32::Foundation::CloseHandle(token);
+        let user = &*(buf.as_ptr() as *const TOKEN_USER);
+        let mut text = PWSTR::null();
+        ConvertSidToStringSidW(user.User.Sid, &mut text).unwrap();
+        let sid = text.to_string().unwrap();
+        LocalFree(Some(HLOCAL(text.0 as _)));
+        sid
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 
@@ -183,39 +217,6 @@ mod tests {
             let _ = windows::Win32::Foundation::CloseHandle(file);
         }
         path
-    }
-
-    fn current_user_sid() -> String {
-        use windows::Win32::{
-            Security::{
-                Authorization::ConvertSidToStringSidW, GetTokenInformation, TOKEN_QUERY,
-                TOKEN_USER, TokenUser,
-            },
-            System::Threading::{GetCurrentProcess, OpenProcessToken},
-        };
-        use windows_core::PWSTR;
-
-        unsafe {
-            let mut token = HANDLE::default();
-            OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).unwrap();
-            let mut buf = vec![0u8; 256];
-            let mut size = 0;
-            GetTokenInformation(
-                token,
-                TokenUser,
-                Some(buf.as_mut_ptr() as _),
-                buf.len() as u32,
-                &mut size,
-            )
-            .unwrap();
-            let _ = windows::Win32::Foundation::CloseHandle(token);
-            let user = &*(buf.as_ptr() as *const TOKEN_USER);
-            let mut text = PWSTR::null();
-            ConvertSidToStringSidW(user.User.Sid, &mut text).unwrap();
-            let sid = text.to_string().unwrap();
-            LocalFree(Some(HLOCAL(text.0 as _)));
-            sid
-        }
     }
 
     #[test]

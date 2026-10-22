@@ -2,7 +2,7 @@ use std::{ffi::CString, mem::zeroed, time::Duration};
 
 use serde::de::DeserializeOwned;
 use serde_json::from_slice;
-use shared::constants::MAX_MESSAGE_LEN;
+use shared::constants::{MAX_MESSAGE_LEN, PIPE_SDDL};
 use thiserror::Error;
 use tokio::{
     io::AsyncReadExt,
@@ -92,9 +92,7 @@ pub fn create_writer_with_security_attrs(
         ConvertStringSecurityDescriptorToSecurityDescriptorA, SDDL_REVISION_1,
     };
 
-    // owner BA can only be set by an elevated process, providers check it
-    let input =
-        CString::new("O:BAD:(D;OICI;GA;;;BG)(D;OICI;GA;;;AN)(A;OICI;GRGWGX;;;AU)(A;OICI;GA;;;BA)")?;
+    let input = CString::new(PIPE_SDDL)?;
 
     let mut attributes: SECURITY_ATTRIBUTES = unsafe { zeroed() };
 

@@ -11,7 +11,7 @@ use windows::Win32::{
     },
     System::LibraryLoader::{GetProcAddress, LoadLibraryW},
 };
-use windows_core::{HSTRING, PCWSTR, s, w};
+use windows_core::{HSTRING, PCWSTR, s};
 use winreg::{RegKey, enums::HKEY_LOCAL_MACHINE};
 
 struct Registered(windows::Win32::Foundation::HMODULE);
@@ -109,7 +109,7 @@ async fn powershell_is_blocked_and_reported() {
     };
     let mut server = unsafe {
         ConvertStringSecurityDescriptorToSecurityDescriptorW(
-            w!("O:BAD:(A;OICI;GA;;;BA)(A;OICI;GRGWGX;;;AU)"),
+            &HSTRING::from(shared::constants::PIPE_SDDL),
             SDDL_REVISION_1,
             &mut attributes.lpSecurityDescriptor as *mut _ as _,
             None,

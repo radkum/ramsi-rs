@@ -172,6 +172,10 @@ mod tests {
 
     // the security descriptor ramsi-cli uses
     fn admin_server(name: &str) -> NamedPipeServer {
+        server_with_sddl(name, shared::constants::PIPE_SDDL)
+    }
+
+    fn server_with_sddl(name: &str, sddl: &str) -> NamedPipeServer {
         use windows::Win32::Security::{
             Authorization::{
                 ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
@@ -185,7 +189,7 @@ mod tests {
         };
         unsafe {
             ConvertStringSecurityDescriptorToSecurityDescriptorW(
-                windows_core::w!("O:BAD:(A;OICI;GA;;;BA)(A;OICI;GRGWGX;;;AU)"),
+                &windows_core::HSTRING::from(sddl),
                 SDDL_REVISION_1,
                 &mut attributes.lpSecurityDescriptor as *mut _ as _,
                 None,
@@ -275,110 +279,24 @@ mod tests {
         assert!(res.is_ok(), "{res:?}");
     }
 
-    // a pipe server started with a non-elevated (LUA) copy of our token
-    #[test]
-    fn rejects_server_that_is_not_elevated() {
-        use windows::{
-            Win32::{
-                Foundation::{CloseHandle, HANDLE},
-                Security::{
-                    CreateRestrictedToken, LUA_TOKEN, TOKEN_ADJUST_DEFAULT, TOKEN_ADJUST_SESSIONID,
-                    TOKEN_ASSIGN_PRIMARY, TOKEN_DUPLICATE, TOKEN_QUERY,
-                },
-                System::{
-                    Pipes::WaitNamedPipeW,
-                    Threading::{
-                        CREATE_NO_WINDOW, CreateProcessAsUserW, GetCurrentProcess,
-                        GetExitCodeProcess, OpenProcessToken, PROCESS_INFORMATION, STARTUPINFOW,
-                        TerminateProcess,
-                    },
-                },
-            },
-            core::{HSTRING, PWSTR},
-        };
-
+    // a user can create the pipe first, but cannot make Administrators its owner
+    #[tokio::test]
+    async fn rejects_server_not_owned_by_admins() {
         let name = pipe_name("untrusted");
-        let script = format!(
-            "$p = New-Object IO.Pipes.NamedPipeServerStream('{}'); $p.WaitForConnection(); \
-             Start-Sleep 30",
-            name.trim_start_matches(r"\\.\pipe\")
+        let sddl = format!(
+            "O:{}D:(A;;GA;;;BA)(A;;GRGWGX;;;AU)",
+            crate::winapi::current_user_sid()
         );
-        let mut cmd: Vec<u16> =
-            format!("powershell.exe -NoProfile -NonInteractive -Command \"{script}\"\0")
-                .encode_utf16()
-                .collect();
+        let _server = server_with_sddl(&name, &sddl);
+        let mut client = PipeClient::new(&name);
 
-        let process = unsafe {
-            let mut token = HANDLE::default();
-            OpenProcessToken(
-                GetCurrentProcess(),
-                TOKEN_QUERY
-                    | TOKEN_DUPLICATE
-                    | TOKEN_ASSIGN_PRIMARY
-                    | TOKEN_ADJUST_DEFAULT
-                    | TOKEN_ADJUST_SESSIONID,
-                &mut token,
-            )
-            .unwrap();
-            let mut lua = HANDLE::default();
-            CreateRestrictedToken(token, LUA_TOKEN, None, None, None, &mut lua).unwrap();
-            let startup = STARTUPINFOW {
-                cb: size_of::<STARTUPINFOW>() as u32,
-                ..Default::default()
-            };
-            let mut info = PROCESS_INFORMATION::default();
-            CreateProcessAsUserW(
-                Some(lua),
-                None,
-                Some(PWSTR(cmd.as_mut_ptr())),
-                None,
-                None,
-                false,
-                CREATE_NO_WINDOW,
-                None,
-                None,
-                &startup,
-                &mut info,
-            )
-            .unwrap();
-            let _ = CloseHandle(info.hThread);
-            let _ = CloseHandle(lua);
-            let _ = CloseHandle(token);
-            info.hProcess
-        };
+        let res = client.connect();
 
-        let pipe = HSTRING::from(name.as_str());
-        let ready = (0..300).any(|_| {
-            std::thread::sleep(std::time::Duration::from_millis(100));
-            unsafe { WaitNamedPipeW(&pipe, 0) }.as_bool()
-        });
-
-        let res = ready.then(|| {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            let _guard = rt.enter();
-            let mut client = PipeClient::new(&name);
-            let res = client.connect();
-            (res, client.active())
-        });
-        let mut exit_code = 0;
-        unsafe {
-            let _ = GetExitCodeProcess(process, &mut exit_code);
-            let _ = TerminateProcess(process, 1);
-            let _ = CloseHandle(process);
-        }
-
-        // STATUS_DLL_INIT_FAILED: no desktop for a LUA token, e.g. in CI
-        if res.is_none() && exit_code == 0xc0000142 {
-            eprintln!("SKIPPED: a non-elevated process cannot start in this session");
-            return;
-        }
-        let (res, active) =
-            res.unwrap_or_else(|| panic!("pipe server did not start, exit code 0x{exit_code:x}"));
         assert!(
             matches!(res, Err(PipeClientError::UntrustedServer(_))),
             "{res:?}"
         );
-        assert!(!active);
+        assert!(!client.active());
     }
 
     #[tokio::test]
