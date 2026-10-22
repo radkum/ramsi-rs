@@ -192,25 +192,16 @@ async fn trace_amsi_events(
         server = pipe_server::create_server(pipe_name)?;
 
         let output = output.clone();
+        // ends with the runtime on Ctrl+C
         let _client = tokio::spawn(async move {
             loop {
-                {
-                    let control_c = CONTROL_C.load(Ordering::Acquire);
-                    if control_c {
-                        break;
-                    }
-                }
-
-                match pipe_server::message::<ScanEvent>(&mut connected_client, 1000).await {
+                match pipe_server::message::<ScanEvent>(&mut connected_client).await {
                     Ok(event) => output.print(&event),
-                    Err(err) => match err {
-                        PipeError::Timeout => { /* to noisy */ },
-                        PipeError::UnexpectedEof => break,
-                        // the stream is out of sync, drop the client
-                        PipeError::IoError(err) => {
-                            log::warn!("Dropping client: {err}");
-                            break;
-                        },
+                    Err(PipeError::UnexpectedEof) => break,
+                    // the stream is stalled or out of sync, drop the client
+                    Err(err) => {
+                        log::warn!("Dropping client: {err}");
+                        break;
                     },
                 }
             }

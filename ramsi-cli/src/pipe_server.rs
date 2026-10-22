@@ -46,27 +46,34 @@ impl From<tokio::time::error::Elapsed> for PipeError {
 
 pub async fn message<M: DeserializeOwned>(
     pipe: &mut NamedPipeServer,
-    time: u64,
 ) -> core::result::Result<M, PipeError> {
-    Ok(read::<M, _>(pipe, time).await?)
+    Ok(read::<M, _>(pipe, BODY_TIMEOUT).await?)
 }
 
 // any local process may write to the pipe, so the length is not trusted
 const MAX_MESSAGE_LEN: u64 = 16 * 1024 * 1024;
+// once the length arrived, the rest of the message must follow within this time
+const BODY_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub async fn read<M: DeserializeOwned, R: AsyncReadExt + std::marker::Unpin>(
     pipe: &mut R,
-    time: u64,
+    body_timeout: Duration,
 ) -> std::io::Result<M> {
-    let message_length = timeout(Duration::from_millis(time), pipe.read_u64()).await??;
+    // no timeout here: read_u64 is not cancel-safe and an idle client is fine
+    let message_length = pipe.read_u64().await?;
     if message_length > MAX_MESSAGE_LEN {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             format!("Message too long: {message_length} bytes"),
         ));
     }
-    let mut buffer = vec![0u8; message_length as usize];
-    pipe.read_exact(&mut buffer).await?;
+    // grows with the data instead of allocating the claimed length up front
+    let mut buffer = Vec::new();
+    let mut body = AsyncReadExt::take(&mut *pipe, message_length);
+    timeout(body_timeout, body.read_to_end(&mut buffer)).await??;
+    if buffer.len() as u64 != message_length {
+        return Err(std::io::ErrorKind::UnexpectedEof.into());
+    }
     Ok(from_slice::<M>(&buffer)?)
 }
 
@@ -125,7 +132,9 @@ mod tests {
     #[tokio::test]
     async fn rejects_oversized_message_length() {
         let mut input: &[u8] = &u64::MAX.to_be_bytes();
-        let err = read::<String, _>(&mut input, 1000).await.unwrap_err();
+        let err = read::<String, _>(&mut input, Duration::from_secs(1))
+            .await
+            .unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     }
 
@@ -134,7 +143,47 @@ mod tests {
         let json = br#""hello""#;
         let mut input = (json.len() as u64).to_be_bytes().to_vec();
         input.extend_from_slice(json);
-        let msg: String = read(&mut input.as_slice(), 1000).await.unwrap();
+        let msg: String = read(&mut input.as_slice(), Duration::from_secs(1))
+            .await
+            .unwrap();
         assert_eq!(msg, "hello");
+    }
+
+    #[tokio::test]
+    async fn stalled_body_times_out() {
+        use tokio::io::AsyncWriteExt;
+
+        let (mut client, mut server) = tokio::io::duplex(64);
+        client.write_u64(10).await.unwrap();
+        client.write_all(b"abc").await.unwrap();
+
+        let err = read::<String, _>(&mut server, Duration::from_millis(100))
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+    }
+
+    #[tokio::test]
+    async fn waits_for_a_slow_length_prefix() {
+        use tokio::io::AsyncWriteExt;
+
+        let (mut client, mut server) = tokio::io::duplex(64);
+        let reader =
+            tokio::spawn(
+                async move { read::<String, _>(&mut server, Duration::from_secs(1)).await },
+            );
+        let json = br#""hi""#;
+        client
+            .write_all(&(json.len() as u64).to_be_bytes()[..3])
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        client
+            .write_all(&(json.len() as u64).to_be_bytes()[3..])
+            .await
+            .unwrap();
+        client.write_all(json).await.unwrap();
+
+        assert_eq!(reader.await.unwrap().unwrap(), "hi");
     }
 }
