@@ -1,5 +1,4 @@
-// Registers the built DLL machine-wide: run elevated on a disposable VM only.
-//   cargo test -p ramsi-com --test e2e -- --ignored
+// Registers the DLL machine-wide: run elevated on a disposable VM, see README
 
 use std::{process::Command, time::Duration};
 
@@ -103,8 +102,7 @@ fn config() -> RegKey {
 #[ignore]
 async fn powershell_is_blocked_and_reported() {
     let suffix = format!("ramsi-e2e-{}", std::process::id());
-    // owned by Administrators like the ramsi-cli pipe, or the provider will not
-    // connect
+    // owned by Administrators, like the ramsi-cli pipe
     let mut attributes = SECURITY_ATTRIBUTES {
         nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
         ..Default::default()
@@ -126,8 +124,7 @@ async fn powershell_is_blocked_and_reported() {
     };
     let registered = Registered::new(&suffix);
     config().set_value("mode", &"block").unwrap();
-    // a keyword only this provider knows, other providers on the machine may block
-    // first
+    // a keyword only ramsi knows, other providers may block first
     write_admin_file(
         &rules_path(),
         &format!("blacklist_keywords = [\"{MARKER}\"]"),
