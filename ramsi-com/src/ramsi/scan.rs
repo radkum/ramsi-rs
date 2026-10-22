@@ -46,6 +46,15 @@ struct Tokens {
     ttypes: BTreeSet<String>,
 }
 
+impl Tokens {
+    fn extend(&mut self, other: Tokens) {
+        self.powershell_version = self.powershell_version.take().or(other.powershell_version);
+        self.script_strings.extend(other.script_strings);
+        self.commands_and_methods.extend(other.commands_and_methods);
+        self.ttypes.extend(other.ttypes);
+    }
+}
+
 struct RefTokens<'a> {
     powershell_version: Option<&'a PsVersion>,
     script_strings: BTreeSet<&'a str>,
@@ -88,25 +97,12 @@ impl Scanner {
             return result;
         }
 
-        // the session lock is released before token extraction
         let tokens_res: DynResult<Tokens> = match script_type {
             ScriptType::PsCommand => {
-                let res = self
-                    .ps_session
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .parse_command(script_content);
-                res.map_err(|err| err.into())
-                    .and_then(|script_res| Self::extract_tokens(script_res))
+                self.parse_tokens(script_content, PowerShellSession::parse_command)
             },
             ScriptType::PsScript => {
-                let res = self
-                    .ps_session
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .parse_script(script_content);
-                res.map_err(|err| err.into())
-                    .and_then(|script_res| Self::extract_tokens(script_res))
+                self.parse_tokens(script_content, PowerShellSession::parse_script)
             },
             ScriptType::PsDataFile => Err(".psd1 file is not supported".into()),
             ScriptType::Other => Err("Only powershell scripts are supported".into()),
@@ -127,6 +123,36 @@ impl Scanner {
         });
 
         self.heuristic_scan((&tokens).into())
+    }
+
+    fn parse_tokens<E: std::error::Error + 'static>(
+        &self,
+        script_content: &str,
+        parse: impl Fn(&mut PowerShellSession, &str) -> Result<ScriptResult, E>,
+    ) -> DynResult<Tokens> {
+        let mut session = self
+            .ps_session
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let script_res = parse(&mut session, script_content)?;
+        // ps-parser 1.2 drops the tokens of a script that runs powershell
+        // -EncodedCommand, its deobfuscated output already holds the decoded
+        // command
+        let invokes_powershell = script_res
+            .errors()
+            .iter()
+            .any(|err| err.to_string().contains("Powershell invocation"));
+        let reparsed = invokes_powershell
+            .then(|| session.parse_script(&script_res.deobfuscated()).ok())
+            .flatten();
+        // the session lock is released before token extraction
+        drop(session);
+
+        let mut tokens = Self::extract_tokens(script_res)?;
+        if let Some(reparsed) = reparsed {
+            tokens.extend(Self::extract_tokens(reparsed)?);
+        }
+        Ok(tokens)
     }
 
     fn sha_scan(&self, _script_content: &str) -> Option<ScanResult> {
@@ -462,6 +488,20 @@ mod tests {
         );
         assert_eq!(
             status("powershell -command Write-Output amsiutils"),
+            ScanStatus::Detected
+        );
+    }
+
+    #[test]
+    fn encoded_command_is_scanned() {
+        // Write-Output 'AmsiUtils'
+        let encoded = "VwByAGkAdABlAC0ATwB1AHQAcAB1AHQAIAAnAEEAbQBzAGkAVQB0AGkAbABzACcA";
+        assert_eq!(
+            status(&format!("powershell -enc {encoded}")),
+            ScanStatus::Detected
+        );
+        assert_eq!(
+            status(&format!("Add-Type x; powershell -e {encoded}; Get-Date")),
             ScanStatus::Detected
         );
     }
