@@ -105,7 +105,16 @@ mod tests {
     use super::*;
 
     fn pipe_name(test: &str) -> String {
-        format!(r"\\.\pipe\ramsi-test-{test}-{}", std::process::id())
+        shared::PipeName::from_suffix(&format!("ramsi-test-{test}-{}", std::process::id()))
+            .to_string()
+    }
+
+    // the runtime may buffer a few writes before one has to wait on the pipe
+    async fn send_until_error(client: &mut PipeClient) -> PipeClientResult<()> {
+        for _ in 0..8 {
+            client.send("x".repeat(1 << 20)).await?;
+        }
+        Ok(())
     }
 
     #[tokio::test]
@@ -115,9 +124,7 @@ mod tests {
         let mut client = PipeClient::new(&name);
         client.connect().unwrap();
 
-        // first write is buffered by the runtime, the next one waits for it
-        client.send("x".repeat(1 << 20)).await.unwrap();
-        let res = client.send("x".repeat(1 << 20)).await;
+        let res = send_until_error(&mut client).await;
 
         assert!(matches!(res, Err(PipeClientError::Timeout)), "{res:?}");
         assert!(!client.active());
@@ -131,7 +138,7 @@ mod tests {
         client.connect().unwrap();
         drop(server);
 
-        assert!(client.send("x").await.is_err());
+        assert!(send_until_error(&mut client).await.is_err());
         assert!(!client.active());
     }
 }

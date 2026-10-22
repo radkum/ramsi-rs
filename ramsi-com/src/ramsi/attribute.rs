@@ -55,8 +55,9 @@ impl Ramsi_Impl {
                 return String::new();
             }
             // string attributes are NUL-terminated
-            let s: String = AmsiString::from(buf).into();
-            s.split('\0').next().unwrap_or_default().to_string()
+            let mut s: String = AmsiString::from(buf).into();
+            s.truncate(s.find('\0').unwrap_or(s.len()));
+            s
         }
     }
 
@@ -123,6 +124,7 @@ mod tests {
     use windows_core::implement;
 
     use super::*;
+    use crate::utils::utf16;
 
     #[implement(IAmsiStream)]
     struct MockStream {
@@ -140,10 +142,7 @@ mod tests {
             retdata: *mut u32,
         ) -> windows_core::Result<()> {
             if attribute == AMSI_ATTRIBUTE_APP_NAME {
-                let name: Vec<u8> = "PowerShell_test\0"
-                    .encode_utf16()
-                    .flat_map(u16::to_le_bytes)
-                    .collect();
+                let name = utf16("PowerShell_test\0");
                 unsafe { *retdata = name.len() as u32 };
                 if (datasize as usize) < name.len() {
                     return Err(windows_core::HRESULT(E_NOT_SUFFICIENT_BUFFER).into());
@@ -182,14 +181,9 @@ mod tests {
         }
     }
 
-    fn stream(script: &str, in_memory: bool) -> IAmsiStream {
-        chunked_stream(script, in_memory, usize::MAX)
-    }
-
-    fn chunked_stream(script: &str, in_memory: bool, read_chunk: usize) -> IAmsiStream {
-        let content = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    fn stream(script: &str, in_memory: bool, read_chunk: usize) -> IAmsiStream {
         MockStream {
-            content,
+            content: utf16(script),
             in_memory,
             read_chunk,
         }
@@ -199,7 +193,7 @@ mod tests {
     #[test]
     fn content_from_memory() {
         assert_eq!(
-            Ramsi_Impl::get_content(&stream("Get-Process", true)),
+            Ramsi_Impl::get_content(&stream("Get-Process", true, usize::MAX)),
             "Get-Process"
         );
     }
@@ -207,7 +201,7 @@ mod tests {
     #[test]
     fn content_from_read_when_address_is_null() {
         assert_eq!(
-            Ramsi_Impl::get_content(&stream("Get-Process", false)),
+            Ramsi_Impl::get_content(&stream("Get-Process", false, usize::MAX)),
             "Get-Process"
         );
     }
@@ -215,16 +209,13 @@ mod tests {
     #[test]
     fn content_from_chunked_reads() {
         let script = "Get-Process | Where-Object { $_.CPU -gt 10 }";
-        assert_eq!(
-            Ramsi_Impl::get_content(&chunked_stream(script, false, 7)),
-            script
-        );
+        assert_eq!(Ramsi_Impl::get_content(&stream(script, false, 7)), script);
     }
 
     #[test]
     fn content_is_not_cut_at_nul() {
         assert_eq!(
-            Ramsi_Impl::get_content(&stream("#\0iex payload", true)),
+            Ramsi_Impl::get_content(&stream("#\0iex payload", true, usize::MAX)),
             "#\0iex payload"
         );
     }
@@ -232,7 +223,7 @@ mod tests {
     #[test]
     fn string_attribute_drops_nul_terminator() {
         assert_eq!(
-            Ramsi_Impl::string_attribute(&stream("", true), AMSI_ATTRIBUTE_APP_NAME),
+            Ramsi_Impl::string_attribute(&stream("", true, usize::MAX), AMSI_ATTRIBUTE_APP_NAME),
             "PowerShell_test"
         );
     }
