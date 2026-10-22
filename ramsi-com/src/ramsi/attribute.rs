@@ -63,12 +63,21 @@ impl Ramsi_Impl {
         let content_ptr = Self::u64_attribute::<*mut c_void>(s, AMSI_ATTRIBUTE_CONTENT_ADDRESS);
         let mut out_buf = vec![0; content_size];
 
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                content_ptr,
-                out_buf.as_mut_ptr() as *mut _,
-                content_size,
-            );
+        if content_ptr.is_null() {
+            // content is not in memory, it must be read from the stream
+            let mut read_size: u32 = 0;
+            if let Err(err) = unsafe { s.Read(0, out_buf.as_mut_slice(), &mut read_size) } {
+                error!("IAmsiStream::Read error: 0x{:08x}, msg: {}", err.code().0, err.message());
+            }
+            out_buf.truncate(read_size as usize);
+        } else {
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    content_ptr,
+                    out_buf.as_mut_ptr() as *mut _,
+                    content_size,
+                );
+            }
         }
 
         AmsiString::from(out_buf).into()
@@ -89,5 +98,72 @@ impl Ramsi_Impl {
         } else {
             ScriptType::PsScript
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use windows_core::implement;
+
+    use super::*;
+
+    #[implement(IAmsiStream)]
+    struct MockStream {
+        content: Vec<u8>,
+        in_memory: bool,
+    }
+
+    impl IAmsiStream_Impl for MockStream_Impl {
+        fn GetAttribute(
+            &self,
+            attribute: AMSI_ATTRIBUTE,
+            datasize: u32,
+            data: *mut u8,
+            retdata: *mut u32,
+        ) -> windows_core::Result<()> {
+            let value: u64 = match attribute {
+                AMSI_ATTRIBUTE_CONTENT_SIZE => self.content.len() as u64,
+                AMSI_ATTRIBUTE_CONTENT_ADDRESS if self.in_memory => self.content.as_ptr() as u64,
+                AMSI_ATTRIBUTE_CONTENT_ADDRESS => 0,
+                _ => return Err(windows_core::Error::empty()),
+            };
+            assert_eq!(datasize as usize, size_of::<u64>());
+            unsafe {
+                std::ptr::write_unaligned(data as *mut u64, value);
+                *retdata = size_of::<u64>() as u32;
+            }
+            Ok(())
+        }
+
+        fn Read(
+            &self,
+            position: u64,
+            size: u32,
+            buffer: *mut u8,
+            readsize: *mut u32,
+        ) -> windows_core::Result<()> {
+            let src = &self.content[position as usize..];
+            let len = src.len().min(size as usize);
+            unsafe {
+                std::ptr::copy_nonoverlapping(src.as_ptr(), buffer, len);
+                *readsize = len as u32;
+            }
+            Ok(())
+        }
+    }
+
+    fn stream(script: &str, in_memory: bool) -> IAmsiStream {
+        let content = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        MockStream { content, in_memory }.into()
+    }
+
+    #[test]
+    fn content_from_memory() {
+        assert_eq!(Ramsi_Impl::get_content(&stream("Get-Process", true)), "Get-Process");
+    }
+
+    #[test]
+    fn content_from_read_when_address_is_null() {
+        assert_eq!(Ramsi_Impl::get_content(&stream("Get-Process", false)), "Get-Process");
     }
 }
