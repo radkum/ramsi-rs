@@ -6,7 +6,7 @@ use std::{
 
 use windows::Win32::System::Threading::GetCurrentThreadId;
 
-use crate::winapi::get_command_line_from_pid;
+use crate::winapi::get_command_line;
 
 #[derive(Default, Clone)]
 pub(crate) struct ProcessInfo {
@@ -27,7 +27,7 @@ impl ProcessInfo {
             .ok()
             .and_then(|p| p.file_name().map(|s| s.to_string_lossy().to_string()))
             .unwrap_or_default();
-        let cmd_line = get_command_line_from_pid(pid).unwrap_or_default();
+        let cmd_line = get_command_line();
         Self {
             pid,
             tid,
@@ -57,5 +57,21 @@ impl ProcessInfo {
 
     pub fn cmd_line(&self) -> &str {
         &self.cmd_line
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn current_process_has_command_line() {
+        let info = ProcessInfo::current();
+        let exe = info.file_path().file_stem().unwrap().to_string_lossy();
+        assert!(
+            info.cmd_line().contains(exe.as_ref()),
+            "{}",
+            info.cmd_line()
+        );
     }
 }
