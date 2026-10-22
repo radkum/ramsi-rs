@@ -75,9 +75,9 @@ pub extern "system" fn DllGetClassObject(
 
 #[unsafe(no_mangle)]
 pub extern "system" fn DllCanUnloadNow() -> HResult {
-    // S_FALSE: the static class factory lives until DLL_PROCESS_DETACH
+    // keep loaded: the static class factory lives until DLL_PROCESS_DETACH
     win_log!("DllCanUnloadNow");
-    1
+    windows::Win32::Foundation::S_FALSE.0
 }
 
 #[unsafe(no_mangle)]

@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, sync::PoisonError};
+use std::collections::BTreeSet;
 
 use cs_parser::CSharpSession;
 use log::debug;
@@ -54,37 +54,34 @@ impl<'a> From<&'a Tokens> for RefTokens<'a> {
 }
 
 impl Ramsi_Impl {
-    pub(super) fn scan_script(
-        &self,
-        script_content: String,
-        script_type: ScriptType,
-    ) -> ScanStatus {
-        if let Some(status) = self.sha_scan(&script_content) {
+    pub(super) fn scan_script(&self, script_content: &str, script_type: ScriptType) -> ScanStatus {
+        if let Some(status) = self.sha_scan(script_content) {
             return status;
         }
 
+        // the session lock is released before token extraction
         let tokens_res: DynResult<Tokens> = match script_type {
-            ScriptType::PsCommand => self
-                .ps_session
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .parse_command(&script_content)
-                .map_err(|err| err.into())
-                .and_then(|script_res| Self::extract_tokens(script_res)),
-            ScriptType::PsScript => self
-                .ps_session
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .parse_script(&script_content)
-                .map_err(|err| err.into())
-                .and_then(|script_res| Self::extract_tokens(script_res)),
+            ScriptType::PsCommand => {
+                let res = self
+                    .ps_session
+                    .lock()
+                    .unwrap()
+                    .parse_command(script_content);
+                res.map_err(|err| err.into())
+                    .and_then(|script_res| Self::extract_tokens(script_res))
+            },
+            ScriptType::PsScript => {
+                let res = self.ps_session.lock().unwrap().parse_script(script_content);
+                res.map_err(|err| err.into())
+                    .and_then(|script_res| Self::extract_tokens(script_res))
+            },
             ScriptType::PsDataFile => Err(".psd1 file is not supported".into()),
             ScriptType::Other => Err("Only powershell scripts are supported".into()),
         };
 
         let tokens = tokens_res.unwrap_or_else(|err| {
             debug!("Failed to parse script: {err}");
-            let string_set: BTreeSet<String> = Self::tokenize(&script_content);
+            let string_set: BTreeSet<String> = Self::tokenize(script_content);
             let functions_and_commands = string_set.clone();
             let ttypes = string_set.clone();
 
@@ -326,7 +323,7 @@ mod tests {
     fn sha_scan() {
         let ramsi = Ramsi::new().into_static();
         assert_eq!(
-            ramsi.scan_script("prompt".to_string(), ScriptType::PsCommand),
+            ramsi.scan_script("prompt", ScriptType::PsCommand),
             ScanStatus::Clean
         );
     }
@@ -338,10 +335,7 @@ mod tests {
             for _ in 0..8 {
                 s.spawn(|| {
                     for _ in 0..20 {
-                        ramsi.scan_script(
-                            "Get-Process | Out-Null".to_string(),
-                            ScriptType::PsCommand,
-                        );
+                        ramsi.scan_script("Get-Process | Out-Null", ScriptType::PsCommand);
                     }
                 });
             }

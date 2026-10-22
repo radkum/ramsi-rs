@@ -11,11 +11,10 @@ use super::Ramsi_Impl;
 use crate::utils::RamsiEvent;
 static RUNTIME: LazyLock<Option<Runtime>> = LazyLock::new(|| Runtime::new().ok());
 impl Ramsi_Impl {
-    pub fn report_script(&self, stream: &IAmsiStream) {
+    pub fn report_script(&self, stream: &IAmsiStream, content: String) {
         let app_name = Self::string_attribute(stream, AMSI_ATTRIBUTE_APP_NAME);
         let content_name = Self::string_attribute(stream, AMSI_ATTRIBUTE_CONTENT_NAME);
         let session = Self::u64_attribute::<u64>(stream, AMSI_ATTRIBUTE_SESSION);
-        let content = Self::get_content(stream);
         let process_info = self.process_info.clone();
 
         let request_num = self.request_number.fetch_add(1, Ordering::AcqRel) + 1;

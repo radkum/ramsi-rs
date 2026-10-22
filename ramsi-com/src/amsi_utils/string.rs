@@ -2,11 +2,12 @@ pub struct AmsiString(String);
 impl AmsiString {
     // length-delimited content may hold NULs or lone surrogates; keep all of it
     pub fn parse_buff(buff: Vec<u8>) -> String {
-        let wide: Vec<u16> = buff
-            .chunks_exact(2)
-            .map(|c| u16::from_le_bytes([c[0], c[1]]))
-            .collect();
-        String::from_utf16_lossy(&wide)
+        char::decode_utf16(
+            buff.chunks_exact(2)
+                .map(|c| u16::from_le_bytes([c[0], c[1]])),
+        )
+        .map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER))
+        .collect()
     }
 }
 
@@ -23,12 +24,13 @@ impl From<Vec<u8>> for AmsiString {
 }
 
 #[cfg(test)]
+pub(crate) fn utf16(s: &str) -> Vec<u8> {
+    s.encode_utf16().flat_map(u16::to_le_bytes).collect()
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
-
-    fn utf16(s: &str) -> Vec<u8> {
-        s.encode_utf16().flat_map(u16::to_le_bytes).collect()
-    }
 
     #[test]
     fn without_nul_terminator() {

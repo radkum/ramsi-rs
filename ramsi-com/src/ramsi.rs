@@ -28,8 +28,7 @@ use winreg::{RegKey, enums::*};
 
 use crate::utils::ProcessInfo;
 pub(super) static mut CLASS_FACTORY: Option<StaticComObject<Ramsi>> = None;
-// created on first DllGetClassObject, heavy init is not allowed under loader
-// lock in DllMain
+// created lazily: heavy init is not allowed under the loader lock in DllMain
 static CLASS_FACTORY_INIT: Once = Once::new();
 
 #[interface("b8614e83-84ac-45fb-82a8-21711aaf07f2")]
@@ -154,7 +153,6 @@ impl IClassFactory_Impl for Ramsi_Impl {
 
 impl Ramsi {
     pub const NAME: &str = "Ramsi";
-    pub const DISPLAY_NAME: &[u16] = &[0x52u16, 0x61, 0x6D, 0x73, 0x69, 0x0]; //Ramsi
 }
 
 impl Ramsi {
@@ -218,16 +216,5 @@ impl Ramsi_Impl {
         let released = class_factory.count.release();
         debug!("Remaining: {released}");
         released == 0
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn display_name_matches_name() {
-        let (_nul, name) = Ramsi::DISPLAY_NAME.split_last().unwrap();
-        assert_eq!(String::from_utf16(name).unwrap(), Ramsi::NAME);
     }
 }
