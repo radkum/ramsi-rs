@@ -2,9 +2,6 @@
 
 **Ramsi** is a custom AMSI (Antimalware Scan Interface) provider implemented in Rust. It enables advanced monitoring and logging of script execution and content scanning on Windows systems.
 
-## Commercial Use & Contact
-This project is a demo version. For commercial licensing, partnership opportunities, or access to the full version (including pattern matching, PowerShell deobfuscation, and script blocking features), please contact: radoslaw.kumorekit@gmail.com
-
 ## Features
 
 - AMSI provider DLL written in Rust (`ramsi-com`)
@@ -99,4 +96,4 @@ regsvr32 /u dist\ramsi_com.dll
 ## License
 
 Licensed under MIT.
-See [LICENSE-MIT](LICENSE-MIT) for details.
+See [LICENSE_MIT](LICENSE_MIT) for details.
