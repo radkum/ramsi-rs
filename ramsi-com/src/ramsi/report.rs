@@ -18,8 +18,7 @@ impl Ramsi_Impl {
         let content = Self::get_content(stream);
         let process_info = self.process_info.clone();
 
-        let request_num = self.request_number.load(Ordering::Acquire) + 1;
-        self.request_number.store(request_num, Ordering::Release);
+        let request_num = self.request_number.fetch_add(1, Ordering::AcqRel) + 1;
 
         let amsi_event = RamsiEvent::new(
             process_info,
