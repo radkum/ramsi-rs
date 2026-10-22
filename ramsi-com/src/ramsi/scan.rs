@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, sync::PoisonError};
 
 use cs_parser::CSharpSession;
 use log::debug;
@@ -65,13 +65,17 @@ impl Ramsi_Impl {
                 let res = self
                     .ps_session
                     .lock()
-                    .unwrap()
+                    .unwrap_or_else(PoisonError::into_inner)
                     .parse_command(script_content);
                 res.map_err(|err| err.into())
                     .and_then(|script_res| Self::extract_tokens(script_res))
             },
             ScriptType::PsScript => {
-                let res = self.ps_session.lock().unwrap().parse_script(script_content);
+                let res = self
+                    .ps_session
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .parse_script(script_content);
                 res.map_err(|err| err.into())
                     .and_then(|script_res| Self::extract_tokens(script_res))
             },

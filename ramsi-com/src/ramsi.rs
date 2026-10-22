@@ -204,6 +204,8 @@ impl Ramsi_Impl {
 
     pub fn create() {
         debug!("Ramsi_Impl::create");
+        // the default hook prints to the host's stderr
+        std::panic::set_hook(Box::new(|info| error!("{info}")));
         unsafe { CLASS_FACTORY = Some(Ramsi::new().into_static()) };
     }
 
