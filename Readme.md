@@ -80,7 +80,9 @@ ramsi-cli.exe config unset mode
 |---|---|---|
 | `mode` | `monitor` | `monitor` reports only, `block` also returns `AMSI_RESULT_DETECTED` |
 | `block_on` | `detected` | lowest status blocked in block mode: `detected` or `suspicious` |
-| `report` | `1` | send detected and suspicious events to the pipe |
+| `report` | `1` | send events to the pipe |
+| `report_on` | `suspicious` | lowest status reported: `detected`, `suspicious` or `all` (every scan, including clean ones) |
+| `commands` | none | `;`-separated commands, e.g. `Register-ScheduledTask`; a script calling one is reported whatever its status, with the command's arguments as the parser evaluated them; allowlisted scripts, scripts that fail to parse and calls through an alias are not matched |
 | `apps` | all | `;`-separated app name prefixes to scan, e.g. `PowerShell_` |
 | `log_level` | `info` | `off`, `error`, `warn`, `info`, `debug`, `trace` |
 | `log_dir` | `C:\ProgramData\ramsi` | logs and dumps; `config set log_dir` secures the new directory |

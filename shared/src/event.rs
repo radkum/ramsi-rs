@@ -9,6 +9,13 @@ pub enum ScanStatus {
     NotDetected,
 }
 
+// a configured command with its arguments as the parser evaluated them
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Command {
+    pub name: String,
+    pub args: Vec<String>,
+}
+
 // sent by the provider over the pipe as JSON
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ScanEvent {
@@ -26,13 +33,39 @@ pub struct ScanEvent {
     pub blocked: bool,
     pub content: String,
     pub content_truncated: bool,
+    // older providers do not send these
+    #[serde(default)]
+    pub commands: Vec<Command>,
+    #[serde(default)]
+    pub commands_truncated: bool,
+    // set by the trace server from the pipe client process, never by the provider
+    pub process_created: Option<String>,
+    pub user_sid: Option<String>,
 }
 
 impl ScanEvent {
+    // commands and content share max_len, commands first
     pub fn truncate_content(&mut self, max_len: usize) {
-        if self.content.len() > max_len {
+        let mut left = max_len;
+        let cut = &mut self.commands_truncated;
+        self.commands.retain_mut(|command| {
+            let Some(rest) = left.checked_sub(command.name.len()) else {
+                *cut = true;
+                return false;
+            };
+            left = rest;
+            command.args.retain_mut(|arg| {
+                let len = arg.len();
+                arg.truncate(arg.floor_char_boundary(left));
+                left -= arg.len();
+                *cut |= arg.len() < len;
+                !arg.is_empty() || len == 0
+            });
+            true
+        });
+        if self.content.len() > left {
             self.content
-                .truncate(self.content.floor_char_boundary(max_len));
+                .truncate(self.content.floor_char_boundary(left));
             self.content_truncated = true;
         }
     }
@@ -87,6 +120,10 @@ mod tests {
             blocked: true,
             content: content.into(),
             content_truncated: false,
+            commands: Vec::new(),
+            commands_truncated: false,
+            process_created: None,
+            user_sid: None,
         }
     }
 
@@ -101,6 +138,39 @@ mod tests {
         e.truncate_content(3);
         assert_eq!(e.content, "abc");
         assert!(!e.content_truncated);
+    }
+
+    #[test]
+    fn commands_share_the_limit_with_content() {
+        let mut e = event("abcdef");
+        e.commands = vec![
+            Command {
+                name: "ab".into(),
+                args: vec!["cd".into(), "efgh".into(), "ij".into()],
+            },
+            Command {
+                name: "kl".into(),
+                args: vec![],
+            },
+        ];
+        e.truncate_content(6);
+        assert_eq!(
+            e.commands,
+            [Command {
+                name: "ab".into(),
+                args: vec!["cd".into(), "ef".into()],
+            }]
+        );
+        assert_eq!(e.content, "");
+        assert!(e.commands_truncated && e.content_truncated);
+    }
+
+    #[test]
+    fn commands_default_to_empty() {
+        let mut json = serde_json::to_value(event("x")).unwrap();
+        json.as_object_mut().unwrap().remove("commands");
+        let e: ScanEvent = serde_json::from_value(json).unwrap();
+        assert!(e.commands.is_empty());
     }
 
     #[test]

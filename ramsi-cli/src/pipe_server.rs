@@ -1,8 +1,16 @@
-use std::{ffi::CString, mem::zeroed, time::Duration};
+use std::{
+    ffi::CString,
+    mem::zeroed,
+    os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle},
+    time::Duration,
+};
 
 use serde::de::DeserializeOwned;
 use serde_json::from_slice;
-use shared::constants::{MAX_MESSAGE_LEN, PIPE_SDDL};
+use shared::{
+    ScanEvent,
+    constants::{MAX_MESSAGE_LEN, PIPE_SDDL},
+};
 use thiserror::Error;
 use tokio::{
     io::AsyncReadExt,
@@ -10,10 +18,19 @@ use tokio::{
     time::timeout,
 };
 use windows::Win32::{
-    Foundation::{HLOCAL, LocalFree},
-    Security::SECURITY_ATTRIBUTES,
+    Foundation::{FILETIME, HANDLE, HLOCAL, LocalFree},
+    Security::{
+        Authorization::ConvertSidToStringSidW, GetTokenInformation, SECURITY_ATTRIBUTES,
+        TOKEN_QUERY, TOKEN_USER, TokenUser,
+    },
+    System::{
+        Pipes::GetNamedPipeClientProcessId,
+        Threading::{
+            GetProcessTimes, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
+        },
+    },
 };
-use windows_core::PCSTR;
+use windows_core::{PCSTR, PWSTR};
 
 #[derive(Error, Debug)]
 pub enum PipeError {
@@ -108,6 +125,77 @@ pub fn create_writer_with_security_attrs(
     server
 }
 
+// the client process as the kernel sees it, any process may write to the pipe
+pub struct ClientIdentity {
+    pid: u32,
+    process_created: Option<String>,
+    user_sid: Option<String>,
+}
+
+impl ClientIdentity {
+    pub fn of(pipe: &NamedPipeServer) -> std::io::Result<Self> {
+        let mut pid = 0;
+        unsafe { GetNamedPipeClientProcessId(HANDLE(pipe.as_raw_handle()), &mut pid)? };
+        let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }
+            .ok()
+            .map(|h| unsafe { OwnedHandle::from_raw_handle(h.0) });
+        let handle = process.as_ref().map(|p| HANDLE(p.as_raw_handle()));
+        Ok(Self {
+            pid,
+            process_created: handle.and_then(process_created),
+            user_sid: handle.and_then(user_sid),
+        })
+    }
+
+    pub fn apply(&self, event: &mut ScanEvent) {
+        if event.pid != self.pid {
+            log::warn!("Client {} sent an event for pid {}", self.pid, event.pid);
+            event.pid = self.pid;
+        }
+        event.process_created = self.process_created.clone();
+        event.user_sid = self.user_sid.clone();
+    }
+}
+
+// with the pid, it tells the process apart from a later one reusing the pid
+fn process_created(process: HANDLE) -> Option<String> {
+    let mut times = [FILETIME::default(); 4];
+    let [created, exited, kernel, user] = &mut times;
+    unsafe { GetProcessTimes(process, created, exited, kernel, user) }.ok()?;
+    let ticks = (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime);
+    // FILETIME counts 100 ns since 1601-01-01
+    let unix_nanos = (ticks as i64 - 116_444_736_000_000_000) * 100;
+    Some(
+        chrono::DateTime::from_timestamp_nanos(unix_nanos)
+            .to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true),
+    )
+}
+
+fn user_sid(process: HANDLE) -> Option<String> {
+    let mut token = HANDLE::default();
+    unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) }.ok()?;
+    let token = unsafe { OwnedHandle::from_raw_handle(token.0) };
+    // u64 keeps TOKEN_USER aligned
+    let mut buf = [0u64; 64];
+    let mut size = 0;
+    unsafe {
+        GetTokenInformation(
+            HANDLE(token.as_raw_handle()),
+            TokenUser,
+            Some(buf.as_mut_ptr() as _),
+            size_of_val(&buf) as u32,
+            &mut size,
+        )
+    }
+    .ok()?;
+    let user = unsafe { &*(buf.as_ptr() as *const TOKEN_USER) };
+    let mut text = PWSTR::null();
+    unsafe { ConvertSidToStringSidW(user.User.Sid, &mut text) }.ok()?;
+    let sid = unsafe { text.to_string() }.ok();
+    unsafe { LocalFree(Some(HLOCAL(text.0 as _))) };
+    sid
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -118,6 +206,35 @@ mod tests {
         let _server = create_first_server(&name).unwrap();
         let _next = create_server(&name).unwrap();
         assert!(create_first_server(&name).is_err());
+    }
+
+    #[tokio::test]
+    async fn identity_comes_from_the_client_process() {
+        use tokio::net::windows::named_pipe::ClientOptions;
+
+        let name =
+            shared::PipeName::from_suffix(&format!("ramsi-cli-identity-{}", std::process::id()))
+                .to_string();
+        let server = create_first_server(&name).unwrap();
+        let _client = ClientOptions::new().open(&name).unwrap();
+        server.connect().await.unwrap();
+
+        let identity = ClientIdentity::of(&server).unwrap();
+        let mut event: ScanEvent = serde_json::from_str(&format!(
+            r#"{{"time":"","pid":{},"tid":0,"process":"","cmd_line":"","app_name":"",
+            "content_name":"","session":0,"request_number":0,"status":"detected",
+            "reason":null,"blocked":false,"content":"","content_truncated":false,
+            "process_created":"forged","user_sid":"S-1-5-18"}}"#,
+            std::process::id() + 4
+        ))
+        .unwrap();
+        identity.apply(&mut event);
+
+        assert_eq!(event.pid, std::process::id());
+        let created = event.process_created.unwrap();
+        assert!(created.starts_with("20"), "{created}");
+        let sid = event.user_sid.unwrap();
+        assert!(sid.starts_with("S-1-5-") && sid != "S-1-5-18", "{sid}");
     }
 
     #[tokio::test]

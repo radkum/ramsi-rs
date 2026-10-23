@@ -179,6 +179,7 @@ async fn trace_amsi_events(
         }
 
         let mut connected_client = server;
+        let identity = pipe_server::ClientIdentity::of(&connected_client);
 
         // Construct the next server to be connected before sending the one
         // we already have of onto a task. This ensures that the server
@@ -190,9 +191,19 @@ async fn trace_amsi_events(
         let output = output.clone();
         // ends with the runtime on Ctrl+C
         let _client = tokio::spawn(async move {
+            let identity = match identity {
+                Ok(identity) => identity,
+                Err(err) => {
+                    log::warn!("Dropping client of unknown pid: {err}");
+                    return;
+                },
+            };
             loop {
                 match pipe_server::message::<ScanEvent>(&mut connected_client).await {
-                    Ok(event) => output.print(&event),
+                    Ok(mut event) => {
+                        identity.apply(&mut event);
+                        output.print(&event);
+                    },
                     Err(PipeError::UnexpectedEof) => break,
                     // the stream is stalled or out of sync, drop the client
                     Err(err) => {

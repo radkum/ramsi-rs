@@ -7,6 +7,7 @@ edition = "2024"
 shared = { path = "../shared" }
 
 anyhow = { workspace = true }
+chrono = { workspace = true }
 log = "0.4.27"
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json = { workspace = true }
@@ -28,6 +29,7 @@ features = [
     "Win32_System_Diagnostics_Debug",
     "Win32_System_Ole",
     "Win32_System_Pipes",
+    "Win32_System_Threading",
     "Win32_Security",
     "Win32_Security_Authorization",
 ]

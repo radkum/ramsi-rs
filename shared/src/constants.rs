@@ -20,7 +20,9 @@ pub mod config_value {
     pub const MODE: &str = "mode";
     pub const BLOCK_ON: &str = "block_on";
     pub const REPORT: &str = "report";
+    pub const REPORT_ON: &str = "report_on";
     pub const APPS: &str = "apps";
+    pub const COMMANDS: &str = "commands";
     pub const LOG_LEVEL: &str = "log_level";
     pub const LOG_DIR: &str = "log_dir";
     pub const DUMP: &str = "dump";

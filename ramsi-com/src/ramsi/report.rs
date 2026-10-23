@@ -3,7 +3,7 @@ use std::sync::{LazyLock, atomic::Ordering};
 
 use log::{debug, error};
 pub use pipe_client::PipeClient;
-use shared::ScanEvent;
+use shared::{Command, ScanEvent};
 use tokio::runtime::Runtime;
 use windows::Win32::System::{Antimalware::*, Threading::GetCurrentThreadId};
 
@@ -36,6 +36,17 @@ impl Ramsi_Impl {
             blocked,
             content,
             content_truncated: false,
+            commands: result
+                .commands
+                .iter()
+                .map(|c| Command {
+                    name: c.name().clone(),
+                    args: c.args().clone(),
+                })
+                .collect(),
+            commands_truncated: false,
+            process_created: None,
+            user_sid: None,
         };
 
         debug!("{}", amsi_event);

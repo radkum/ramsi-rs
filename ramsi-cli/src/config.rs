@@ -33,7 +33,9 @@ const VALUES: &[(&str, Kind)] = &[
     (MODE, Kind::Choice(&["monitor", "block"])),
     (BLOCK_ON, Kind::Choice(&["detected", "suspicious"])),
     (REPORT, Kind::Dword),
+    (REPORT_ON, Kind::Choice(&["detected", "suspicious", "all"])),
     (APPS, Kind::Text),
+    (COMMANDS, Kind::Text),
     (
         LOG_LEVEL,
         Kind::Choice(&["off", "error", "warn", "info", "debug", "trace"]),

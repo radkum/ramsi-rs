@@ -15,6 +15,7 @@ use super::{PsVersion, ScriptType, rules::Rules};
 pub struct ScanResult {
     pub status: ScanStatus,
     pub reason: Option<String>,
+    pub commands: Vec<CommandToken>,
 }
 
 impl ScanResult {
@@ -22,6 +23,7 @@ impl ScanResult {
         Self {
             status,
             reason: Some(reason),
+            commands: Vec::new(),
         }
     }
 }
@@ -42,6 +44,7 @@ struct Tokens {
     script_strings: BTreeSet<String>,
     commands_and_methods: BTreeSet<String>,
     ttypes: BTreeSet<String>,
+    commands: Vec<CommandToken>,
 }
 
 impl Tokens {
@@ -50,6 +53,7 @@ impl Tokens {
         self.script_strings.extend(other.script_strings);
         self.commands_and_methods.extend(other.commands_and_methods);
         self.ttypes.extend(other.ttypes);
+        self.commands.extend(other.commands);
     }
 }
 
@@ -95,10 +99,13 @@ impl Scanner {
                 script_strings: string_set,
                 commands_and_methods: functions_and_commands,
                 ttypes,
+                commands: Vec::new(),
             }
         });
 
-        self.heuristic_scan(&tokens)
+        let mut result = self.heuristic_scan(&tokens);
+        result.commands = tokens.commands;
+        result
     }
 
     fn parse_tokens<E: std::error::Error + 'static>(
@@ -139,6 +146,7 @@ impl Scanner {
             commands_and_methods,
             ttypes,
             powershell_version,
+            ..
         } = tokens;
 
         for s in self.rules.blacklist_keywords.iter() {
@@ -216,6 +224,7 @@ impl Scanner {
         ScanResult {
             status: ScanStatus::NotDetected,
             reason: None,
+            commands: Vec::new(),
         }
     }
 
@@ -246,6 +255,7 @@ impl Scanner {
             script_strings: string_set,
             commands_and_methods,
             ttypes,
+            commands,
         };
         // the -command text is a script of its own
         for command in powershell_commands {
@@ -412,6 +422,23 @@ mod tests {
         assert_eq!(result.status, ScanStatus::Detected);
         let result = scanner.scan("Get-Date", ScriptType::PsCommand);
         assert_eq!(result.status, ScanStatus::Clean);
+    }
+
+    #[test]
+    fn commands_carry_evaluated_args() {
+        let scanner = Scanner::default();
+        scanner.scan("$n = 'Upd' + 'ater'", ScriptType::PsCommand);
+        let result = scanner.scan(
+            "$p = @{ TaskName = $n }; Register-ScheduledTask @p",
+            ScriptType::PsCommand,
+        );
+
+        let command = result
+            .commands
+            .iter()
+            .find(|c| c.name().eq_ignore_ascii_case("register-scheduledtask"))
+            .unwrap();
+        assert_eq!(command.args(), &["-taskname", "Updater"]);
     }
 
     fn status(script: &str) -> ScanStatus {
