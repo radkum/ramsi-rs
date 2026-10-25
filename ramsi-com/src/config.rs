@@ -5,7 +5,10 @@ use shared::{
     PipeName,
     constants::{CONFIG_KEY, DEFAULT_LOG_DIR, MAX_CONTENT_LIMIT, RAMSI_PIPE_SUFFIX, config_value},
 };
-use winreg::{RegKey, enums::HKEY_LOCAL_MACHINE};
+use winreg::{
+    RegKey,
+    enums::{HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_64KEY},
+};
 
 use crate::ScanStatus;
 
@@ -58,7 +61,10 @@ impl Default for Config {
 impl Config {
     // missing or invalid values fall back to defaults
     pub fn load() -> Self {
-        match RegKey::predef(HKEY_LOCAL_MACHINE).open_subkey(CONFIG_KEY) {
+        // the 32-bit provider reads the same key, not its WOW6432Node copy
+        match RegKey::predef(HKEY_LOCAL_MACHINE)
+            .open_subkey_with_flags(CONFIG_KEY, KEY_READ | KEY_WOW64_64KEY)
+        {
             Ok(key) => Self::from_key(&key),
             Err(_) => Self::default(),
         }
@@ -73,8 +79,9 @@ impl Config {
     }
 
     pub fn reports_command(&self, name: &str) -> bool {
+        let name = command_name(name);
         // Module\Command calls the same command
-        let name = name.rsplit('\\').next().unwrap_or(name);
+        let name = name.rsplit('\\').next().unwrap_or(&name);
         self.report && self.commands.iter().any(|c| c.eq_ignore_ascii_case(name))
     }
 
@@ -152,6 +159,11 @@ fn reaches(status: ScanStatus, lowest: ScanStatus) -> bool {
         ScanStatus::Suspicious => lowest != ScanStatus::Detected,
         ScanStatus::Clean | ScanStatus::NotDetected => lowest == ScanStatus::NotDetected,
     }
+}
+
+// an expression call like & ('a' + 'b') quotes the name, backticks only escape
+pub fn command_name(name: &str) -> String {
+    name.trim_matches(['"', '\'']).replace('`', "")
 }
 
 // lowercase, ';'-separated, empty entries dropped
@@ -307,6 +319,8 @@ mod tests {
         assert!(config.reports_command("Register-ScheduledTask"));
         assert!(config.reports_command("ScheduledTasks\\Register-ScheduledTask"));
         assert!(!config.reports_command("Get-ScheduledTask"));
+        assert!(config.reports_command("\"Register-ScheduledTask\""));
+        assert!(config.reports_command("Reg`ister-ScheduledTask"));
 
         let off = Config {
             report: false,

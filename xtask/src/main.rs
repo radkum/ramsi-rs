@@ -35,28 +35,46 @@ fn dist() -> Result<(), DynError> {
     let _ = fs::remove_dir_all(dist_dir());
     fs::create_dir_all(dist_dir())?;
 
-    dist_binary("ramsi-com", "ramsi_com.dll")?;
-    dist_binary("ramsi-cli", "ramsi-cli.exe")?;
+    dist_binary("ramsi-com", "ramsi_com.dll", None, "ramsi_com.dll")?;
+    // for 32-bit processes, e.g. SysWOW64\WindowsPowerShell
+    dist_binary(
+        "ramsi-com",
+        "ramsi_com.dll",
+        Some("i686-pc-windows-msvc"),
+        "ramsi_com32.dll",
+    )?;
+    dist_binary("ramsi-cli", "ramsi-cli.exe", None, "ramsi-cli.exe")?;
 
     Ok(())
 }
 
-fn dist_binary(package: &str, binary: &str) -> Result<(), DynError> {
+fn dist_binary(
+    package: &str,
+    binary: &str,
+    target: Option<&str>,
+    dist_name: &str,
+) -> Result<(), DynError> {
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-    let status = Command::new(cargo)
+    let mut build = Command::new(cargo);
+    build
         .current_dir(project_root())
-        .args(["build", "--release", "-p", package])
-        .status()?;
+        .args(["build", "--release", "-p", package]);
+    if let Some(target) = target {
+        build.args(["--target", target]);
+    }
+    let status = build.status()?;
 
     if !status.success() {
         Err("cargo build failed")?;
     }
 
-    let dst = project_root().join("target\\release").join(binary);
+    let dst = project_root()
+        .join("target")
+        .join(target.unwrap_or_default())
+        .join("release")
+        .join(binary);
 
-    //println!("dst: {}", dst.display());
-    //println!("dist: {}", dist_dir().join(binary).display());
-    fs::copy(&dst, dist_dir().join(binary)).unwrap();
+    fs::copy(&dst, dist_dir().join(dist_name)).unwrap();
 
     // if Command::new("strip")
     //     .arg("--version")

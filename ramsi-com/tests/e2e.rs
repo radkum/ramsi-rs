@@ -18,7 +18,10 @@ use windows::Win32::{
     System::LibraryLoader::{GetProcAddress, LoadLibraryW},
 };
 use windows_core::{HSTRING, PCWSTR, s};
-use winreg::{RegKey, enums::HKEY_LOCAL_MACHINE};
+use winreg::{
+    RegKey,
+    enums::{HKEY_LOCAL_MACHINE, KEY_ALL_ACCESS, KEY_WOW64_64KEY},
+};
 
 struct Registered(windows::Win32::Foundation::HMODULE);
 
@@ -97,9 +100,10 @@ fn write_admin_file(path: &std::path::Path, content: &str) {
     std::fs::write(path, content).unwrap();
 }
 
+// the 64-bit view the providers read, also from a 32-bit test run
 fn config() -> RegKey {
     RegKey::predef(HKEY_LOCAL_MACHINE)
-        .create_subkey(CONFIG_KEY)
+        .create_subkey_with_flags(CONFIG_KEY, KEY_ALL_ACCESS | KEY_WOW64_64KEY)
         .unwrap()
         .0
 }

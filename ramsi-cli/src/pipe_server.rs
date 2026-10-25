@@ -17,16 +17,20 @@ use tokio::{
     net::windows::named_pipe::{NamedPipeServer, ServerOptions},
     time::timeout,
 };
-use windows::Win32::{
-    Foundation::{FILETIME, HANDLE, HLOCAL, LocalFree},
-    Security::{
-        Authorization::ConvertSidToStringSidW, GetTokenInformation, SECURITY_ATTRIBUTES,
-        TOKEN_QUERY, TOKEN_USER, TokenUser,
-    },
-    System::{
-        Pipes::GetNamedPipeClientProcessId,
-        Threading::{
-            GetProcessTimes, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
+use windows::{
+    Wdk::System::Threading::{NtQueryInformationProcess, ProcessBasicInformation},
+    Win32::{
+        Foundation::{FILETIME, HANDLE, HLOCAL, LocalFree},
+        Security::{
+            Authorization::ConvertSidToStringSidW, GetTokenInformation, SECURITY_ATTRIBUTES,
+            TOKEN_QUERY, TOKEN_USER, TokenUser,
+        },
+        System::{
+            Pipes::{GetNamedPipeClientProcessId, GetNamedPipeClientSessionId},
+            Threading::{
+                GetProcessTimes, OpenProcess, OpenProcessToken, PROCESS_BASIC_INFORMATION,
+                PROCESS_QUERY_LIMITED_INFORMATION,
+            },
         },
     },
 };
@@ -130,45 +134,84 @@ pub struct ClientIdentity {
     pid: u32,
     process_created: Option<String>,
     user_sid: Option<String>,
+    parent_pid: Option<u32>,
+    session_id: Option<u32>,
 }
 
 impl ClientIdentity {
     pub fn of(pipe: &NamedPipeServer) -> std::io::Result<Self> {
+        let pipe = HANDLE(pipe.as_raw_handle());
         let mut pid = 0;
-        unsafe { GetNamedPipeClientProcessId(HANDLE(pipe.as_raw_handle()), &mut pid)? };
-        let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }
-            .ok()
-            .map(|h| unsafe { OwnedHandle::from_raw_handle(h.0) });
+        unsafe { GetNamedPipeClientProcessId(pipe, &mut pid)? };
+        let process = open_process(pid);
         let handle = process.as_ref().map(|p| HANDLE(p.as_raw_handle()));
+        let mut session_id = 0;
+        let session_id = unsafe { GetNamedPipeClientSessionId(pipe, &mut session_id) }
+            .ok()
+            .map(|()| session_id);
+        let ticks = handle.and_then(creation_ticks);
         Ok(Self {
             pid,
-            process_created: handle.and_then(process_created),
+            process_created: ticks.map(process_created),
             user_sid: handle.and_then(user_sid),
+            parent_pid: handle.zip(ticks).and_then(|(h, t)| parent_pid(h, t)),
+            session_id,
         })
     }
 
-    pub fn apply(&self, event: &mut ScanEvent) {
+    // false when the event claims another pid, it cannot be trusted
+    #[must_use]
+    pub fn apply(&self, event: &mut ScanEvent) -> bool {
         if event.pid != self.pid {
             log::warn!("Client {} sent an event for pid {}", self.pid, event.pid);
-            event.pid = self.pid;
+            return false;
         }
         event.process_created = self.process_created.clone();
         event.user_sid = self.user_sid.clone();
+        event.parent_pid = self.parent_pid;
+        event.session_id = self.session_id;
+        true
     }
 }
 
-// with the pid, it tells the process apart from a later one reusing the pid
-fn process_created(process: HANDLE) -> Option<String> {
+fn open_process(pid: u32) -> Option<OwnedHandle> {
+    unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }
+        .ok()
+        .map(|h| unsafe { OwnedHandle::from_raw_handle(h.0) })
+}
+
+// FILETIME ticks, 100 ns since 1601-01-01
+fn creation_ticks(process: HANDLE) -> Option<u64> {
     let mut times = [FILETIME::default(); 4];
     let [created, exited, kernel, user] = &mut times;
     unsafe { GetProcessTimes(process, created, exited, kernel, user) }.ok()?;
-    let ticks = (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime);
-    // FILETIME counts 100 ns since 1601-01-01
+    Some((u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime))
+}
+
+// with the pid, it tells the process apart from a later one reusing the pid
+fn process_created(ticks: u64) -> String {
     let unix_nanos = (ticks as i64 - 116_444_736_000_000_000) * 100;
-    Some(
-        chrono::DateTime::from_timestamp_nanos(unix_nanos)
-            .to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true),
-    )
+    chrono::DateTime::from_timestamp_nanos(unix_nanos)
+        .to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)
+}
+
+// None if the parent is gone: a process newer than the child reused its pid
+fn parent_pid(process: HANDLE, child_ticks: u64) -> Option<u32> {
+    let mut info = PROCESS_BASIC_INFORMATION::default();
+    unsafe {
+        NtQueryInformationProcess(
+            process,
+            ProcessBasicInformation,
+            &mut info as *mut _ as _,
+            size_of_val(&info) as u32,
+            &mut 0,
+        )
+    }
+    .ok()
+    .ok()?;
+    let parent_pid = info.InheritedFromUniqueProcessId as u32;
+    let parent = open_process(parent_pid)?;
+    (creation_ticks(HANDLE(parent.as_raw_handle()))? <= child_ticks).then_some(parent_pid)
 }
 
 fn user_sid(process: HANDLE) -> Option<String> {
@@ -220,21 +263,47 @@ mod tests {
         server.connect().await.unwrap();
 
         let identity = ClientIdentity::of(&server).unwrap();
-        let mut event: ScanEvent = serde_json::from_str(&format!(
-            r#"{{"time":"","pid":{},"tid":0,"process":"","cmd_line":"","app_name":"",
-            "content_name":"","session":0,"request_number":0,"status":"detected",
-            "reason":null,"blocked":false,"content":"","content_truncated":false,
-            "process_created":"forged","user_sid":"S-1-5-18"}}"#,
-            std::process::id() + 4
-        ))
-        .unwrap();
-        identity.apply(&mut event);
+        let event = |pid: u32| -> ScanEvent {
+            serde_json::from_str(&format!(
+                r#"{{"time":"","pid":{pid},"tid":0,"process":"","cmd_line":"","app_name":"",
+                "content_name":"","session":0,"request_number":0,"status":"detected",
+                "reason":null,"blocked":false,"content":"","content_truncated":false,
+                "process_created":"forged","user_sid":"S-1-5-18"}}"#
+            ))
+            .unwrap()
+        };
+        assert!(!identity.apply(&mut event(std::process::id() + 4)));
 
-        assert_eq!(event.pid, std::process::id());
+        let mut event = event(std::process::id());
+        assert!(identity.apply(&mut event));
+        assert!(
+            event
+                .parent_pid
+                .is_some_and(|p| p != 0 && p != std::process::id())
+        );
+        assert!(event.session_id.is_some());
         let created = event.process_created.unwrap();
         assert!(created.starts_with("20"), "{created}");
         let sid = event.user_sid.unwrap();
         assert!(sid.starts_with("S-1-5-") && sid != "S-1-5-18", "{sid}");
+    }
+
+    #[test]
+    fn parent_pid_of_a_child_is_this_process() {
+        let mut child = std::process::Command::new("cmd")
+            .args(["/c", "pause"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let child_handle = HANDLE(child.as_raw_handle());
+        let ticks = creation_ticks(child_handle).unwrap();
+        let parent = parent_pid(child_handle, ticks);
+        // a parent created after the child only reuses the pid
+        let reused = parent_pid(child_handle, 0);
+        child.kill().unwrap();
+        assert_eq!(parent, Some(std::process::id()));
+        assert_eq!(reused, None);
     }
 
     #[tokio::test]

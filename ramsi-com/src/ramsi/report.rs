@@ -1,15 +1,22 @@
 mod pipe_client;
-use std::sync::{LazyLock, atomic::Ordering};
+use std::sync::{
+    LazyLock,
+    atomic::{AtomicBool, Ordering},
+};
 
 use log::{debug, error};
-pub use pipe_client::PipeClient;
-use shared::{Command, ScanEvent};
-use tokio::runtime::Runtime;
+pub use pipe_client::{PipeClient, PipeClientError};
+use shared::{Command, SCHEMA_VERSION, ScanEvent};
+use tokio::runtime::{Builder, Runtime};
 use windows::Win32::System::{Antimalware::*, Threading::GetCurrentThreadId};
 
 use super::{Ramsi_Impl, ScanResult};
-use crate::utils::dump;
-static RUNTIME: LazyLock<Option<Runtime>> = LazyLock::new(|| Runtime::new().ok());
+use crate::{config::command_name, utils::dump};
+// one pipe needs no worker thread per core in every reporting process
+static RUNTIME: LazyLock<Option<Runtime>> =
+    LazyLock::new(|| Builder::new_current_thread().enable_all().build().ok());
+// a missing or stalled server is logged once per outage, not on every scan
+static CONNECT_FAILED: AtomicBool = AtomicBool::new(false);
 impl Ramsi_Impl {
     pub fn report_script(
         &self,
@@ -22,6 +29,7 @@ impl Ramsi_Impl {
     ) {
         let process_info = &self.process_info;
         let mut amsi_event = ScanEvent {
+            version: SCHEMA_VERSION,
             time: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
             pid: process_info.pid(),
             tid: unsafe { GetCurrentThreadId() },
@@ -36,17 +44,23 @@ impl Ramsi_Impl {
             blocked,
             content,
             content_truncated: false,
-            commands: result
-                .commands
-                .iter()
-                .map(|c| Command {
-                    name: c.name().clone(),
+            // a command in a function or script block is tokenized again for each call
+            commands: result.commands.iter().fold(Vec::new(), |mut commands, c| {
+                let command = Command {
+                    name: command_name(c.name()),
                     args: c.args().clone(),
-                })
-                .collect(),
+                };
+                if !commands.contains(&command) {
+                    commands.push(command);
+                }
+                commands
+            }),
             commands_truncated: false,
+            parse_failed: result.parse_failed,
             process_created: None,
             user_sid: None,
+            parent_pid: None,
+            session_id: None,
         };
 
         debug!("{}", amsi_event);
@@ -61,11 +75,20 @@ impl Ramsi_Impl {
 
         if let Some(runtime) = &*RUNTIME {
             runtime.block_on(async {
-                if !self.pipe_client.read().await.active()
-                    && let Err(err) = self.pipe_client.write().await.connect()
-                {
-                    error!("{err}");
-                    return;
+                if !self.pipe_client.read().await.active() {
+                    match self.pipe_client.write().await.connect() {
+                        Ok(()) => CONNECT_FAILED.store(false, Ordering::Relaxed),
+                        Err(err) => {
+                            let outage = matches!(
+                                err,
+                                PipeClientError::FailedToConnect(..) | PipeClientError::Backoff
+                            );
+                            if !outage || !CONNECT_FAILED.swap(true, Ordering::Relaxed) {
+                                error!("{err}");
+                            }
+                            return;
+                        },
+                    }
                 }
 
                 let _ = self

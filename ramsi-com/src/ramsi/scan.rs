@@ -16,6 +16,7 @@ pub struct ScanResult {
     pub status: ScanStatus,
     pub reason: Option<String>,
     pub commands: Vec<CommandToken>,
+    pub parse_failed: bool,
 }
 
 impl ScanResult {
@@ -24,6 +25,7 @@ impl ScanResult {
             status,
             reason: Some(reason),
             commands: Vec::new(),
+            parse_failed: false,
         }
     }
 }
@@ -70,17 +72,20 @@ impl Scanner {
             return result;
         }
 
-        let tokens_res: DynResult<Tokens> = match script_type {
-            ScriptType::PsCommand => {
-                self.parse_tokens(script_content, PowerShellSession::parse_command)
-            },
-            ScriptType::PsScript => {
-                self.parse_tokens(script_content, PowerShellSession::parse_script)
-            },
-            ScriptType::PsDataFile => Err(".psd1 file is not supported".into()),
-            ScriptType::Other => Err("Only powershell scripts are supported".into()),
+        let (tokens_res, parsed): (DynResult<Tokens>, bool) = match script_type {
+            ScriptType::PsCommand => (
+                self.parse_tokens(script_content, PowerShellSession::parse_command),
+                true,
+            ),
+            ScriptType::PsScript => (
+                self.parse_tokens(script_content, PowerShellSession::parse_script),
+                true,
+            ),
+            ScriptType::PsDataFile => (Err(".psd1 file is not supported".into()), false),
+            ScriptType::Other => (Err("Only powershell scripts are supported".into()), false),
         };
 
+        let parse_failed = parsed && tokens_res.is_err();
         let tokens = tokens_res.unwrap_or_else(|err| {
             debug!("Failed to parse script: {err}");
             let string_set: BTreeSet<String> = Self::tokenize(script_content);
@@ -105,6 +110,7 @@ impl Scanner {
 
         let mut result = self.heuristic_scan(&tokens);
         result.commands = tokens.commands;
+        result.parse_failed = parse_failed;
         result
     }
 
@@ -225,6 +231,7 @@ impl Scanner {
             status: ScanStatus::NotDetected,
             reason: None,
             commands: Vec::new(),
+            parse_failed: false,
         }
     }
 
@@ -439,6 +446,59 @@ mod tests {
             .find(|c| c.name().eq_ignore_ascii_case("register-scheduledtask"))
             .unwrap();
         assert_eq!(command.args(), &["-taskname", "Updater"]);
+    }
+
+    #[test]
+    fn obfuscated_and_nested_calls_match_a_configured_command() {
+        let config = crate::config::Config {
+            commands: vec!["register-scheduledtask".into()],
+            ..Default::default()
+        };
+        // Register-ScheduledTask -TaskName 'Upd' -Action $a
+        let enc = "UgBlAGcAaQBzAHQAZQByAC0AUwBjAGgAZQBkAHUAbABlAGQAVABhAHMAawAgAC0AVABhAHMAawBOAGEA\
+                   bQBlACAAJwBVAHAAZAAnACAALQBBAGMAdABpAG8AbgAgACQAYQA=";
+        for script in [
+            "Register-ScheduledTask -TaskName 'Upd' -Action $action",
+            "register-scheduledtask -taskname upd",
+            r"ScheduledTasks\Register-ScheduledTask -TaskName 'Upd'",
+            "Register-ScheduledTask 'Upd' -Action $a",
+            "$p = @{ TaskName = 'Up' + 'd' }; Register-ScheduledTask @p",
+            "New-ScheduledTask -Action $a | Register-ScheduledTask -TaskName 'Upd'",
+            "& ('Register-' + 'ScheduledTask') -TaskName 'Upd'",
+            ".('Reg' + 'ister-ScheduledTask') -TaskName 'Upd'",
+            "$c = 'Register-ScheduledTask'; & $c -TaskName 'Upd'",
+            "& ('{1}-{0}' -f 'ScheduledTask', 'Register') -TaskName 'Upd'",
+            "Reg`ister-Schedu`ledTask -TaskName 'Upd'",
+            "try { Register-ScheduledTask -TaskName 'Upd' } catch { }",
+            "foreach ($i in 1..2) { Register-ScheduledTask -TaskName \"Upd$i\" }",
+            "function f { Register-ScheduledTask -TaskName 'Upd' }; f",
+            "& { Register-ScheduledTask -TaskName 'Upd' }",
+            &format!("powershell -EncodedCommand {enc}"),
+            &format!("powershell.exe -enc {enc}"),
+        ] {
+            let result = Scanner::default().scan(script, ScriptType::PsScript);
+            assert!(
+                result
+                    .commands
+                    .iter()
+                    .any(|c| config.reports_command(c.name())),
+                "{script}: {:?}",
+                result.commands
+            );
+        }
+    }
+
+    #[test]
+    fn parse_failure_is_flagged() {
+        let scanner = Scanner::default();
+        let result = scanner.scan("Register-ScheduledTask -TaskName (", ScriptType::PsScript);
+        assert!(result.parse_failed && result.commands.is_empty());
+        assert!(!scanner.scan("Get-Date", ScriptType::PsScript).parse_failed);
+        assert!(
+            !scanner
+                .scan("WScript.Echo 1", ScriptType::Other)
+                .parse_failed
+        );
     }
 
     fn status(script: &str) -> ScanStatus {
