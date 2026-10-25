@@ -34,8 +34,7 @@ enum Command {
     Register {
         #[arg(long, default_value = RAMSI_COM_DLL)]
         dll: String,
-        /// The 32-bit provider DLL, for 32-bit processes such as SysWOW64
-        /// PowerShell
+        /// The 32-bit provider DLL, for SysWOW64 PowerShell
         #[arg(long)]
         dll32: Option<String>,
         /// Pipe name suffix (\\.\pipe\<SUFFIX>) the provider reports to
@@ -86,17 +85,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     match Cli::parse().command {
         Command::Register { dll, dll32, pipe } => {
             let pipe = pipe_suffix(pipe)?;
-            // first, it writes the default pipe that the 64-bit registration then overrides
             if let Some(dll32) = dll32 {
                 regsvr32(&dll32, false)?;
             }
             ComWrapper::new(&dll)?.register(&pipe)?;
         },
         Command::Unregister { dll, dll32 } => {
-            ComWrapper::new(&dll)?.unregister()?;
+            // both are tried, a failed one must not leave the other registered
+            let unregistered = ComWrapper::new(&dll).and_then(|com| com.unregister());
             if let Some(dll32) = dll32 {
                 regsvr32(&dll32, true)?;
             }
+            unregistered?;
         },
         Command::Trace {
             pipe,
@@ -209,6 +209,8 @@ async fn trace_amsi_events(
         }
 
         let mut connected_client = server;
+        // read now, a short-lived client may exit before the task runs
+        let identity = pipe_server::ClientIdentity::of(&connected_client);
 
         // Construct the next server to be connected before sending the one
         // we already have of onto a task. This ensures that the server
@@ -220,7 +222,7 @@ async fn trace_amsi_events(
         let output = output.clone();
         // ends with the runtime on Ctrl+C
         let _client = tokio::spawn(async move {
-            let identity = match pipe_server::ClientIdentity::of(&connected_client) {
+            let identity = match identity {
                 Ok(identity) => identity,
                 Err(err) => {
                     log::warn!("Dropping client of unknown pid: {err}");

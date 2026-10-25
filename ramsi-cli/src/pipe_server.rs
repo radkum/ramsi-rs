@@ -195,8 +195,7 @@ fn process_created(ticks: u64) -> String {
         .to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)
 }
 
-// None when the parent is gone, a process created after the child only reuses
-// its pid
+// None if the parent is gone: a process newer than the child reused its pid
 fn parent_pid(process: HANDLE, child_ticks: u64) -> Option<u32> {
     let mut info = PROCESS_BASIC_INFORMATION::default();
     unsafe {

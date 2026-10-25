@@ -10,7 +10,7 @@ use ramsi::{Ramsi, Ramsi_Impl};
 pub use ramsi::{Rules, ScanResult, ScanStatus, Scanner, ScriptType};
 use shared::{
     PipeName,
-    constants::{CONFIG_KEY, RAMSI_PIPE_SUFFIX, config_value},
+    constants::{CONFIG_KEY, config_value},
 };
 use windows::Win32::{Foundation::HMODULE, System::LibraryLoader::DisableThreadLibraryCalls};
 type Dword = u32;
@@ -105,10 +105,6 @@ pub extern "system" fn DllRegisterServer() -> HResult {
 }
 
 fn imp_register_server(pipe_suffix: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
-    let pipe_suffix = pipe_suffix.as_deref().unwrap_or(RAMSI_PIPE_SUFFIX);
-    let pipe_name = PipeName::from_suffix(pipe_suffix);
-    pipe_name.verify()?;
-
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
 
     //set CLSID
@@ -124,7 +120,12 @@ fn imp_register_server(pipe_suffix: Option<String>) -> Result<(), Box<dyn std::e
     key.set_value("", &Ramsi::NAME)?;
 
     let (key, _) = hklm.create_subkey_with_flags(CONFIG_KEY, KEY_SET_VALUE | KEY_WOW64_64KEY)?;
-    key.set_value(config_value::PIPE, &pipe_name.suffix())?;
+    // plain DllRegisterServer, e.g. regsvr32, keeps the configured pipe
+    if let Some(pipe_suffix) = pipe_suffix {
+        let pipe_name = PipeName::from_suffix(&pipe_suffix);
+        pipe_name.verify()?;
+        key.set_value(config_value::PIPE, &pipe_name.suffix())?;
+    }
     winapi::secure_log_dir(&config::Config::load().log_dir)?;
 
     // set InProcServer32
@@ -169,15 +170,20 @@ pub extern "system" fn DllUnregisterServer() -> HResult {
 fn imp_unregister_server() -> Result<(), Box<dyn std::error::Error>> {
     win_log!("DllUnregisterServer start");
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    // a key already gone, e.g. after a failed unregister, must not keep the others
+    let delete = |path: String| match hklm.delete_subkey_all(path) {
+        Err(err) if err.kind() != std::io::ErrorKind::NotFound => Err(err),
+        _ => Ok(()),
+    };
 
     // Unregister this CLSID as an anti-malware provider.
     let amsi_provider_path_string =
         format!("Software\\Microsoft\\AMSI\\Providers\\{}", Ramsi::IID());
-    hklm.delete_subkey_all(amsi_provider_path_string)?;
+    delete(amsi_provider_path_string)?;
 
     // Unregister this CLSID as a COM server.
     let CLSID_path = format!("Software\\Classes\\CLSID\\{}", Ramsi::IID());
-    hklm.delete_subkey_all(CLSID_path)?;
+    delete(CLSID_path)?;
 
     // written by register, a temporary pipe must not outlive the registration
     if let Ok(key) = hklm.open_subkey_with_flags(CONFIG_KEY, KEY_SET_VALUE | KEY_WOW64_64KEY) {

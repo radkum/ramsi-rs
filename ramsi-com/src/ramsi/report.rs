@@ -5,18 +5,17 @@ use std::sync::{
 };
 
 use log::{debug, error};
-pub use pipe_client::PipeClient;
+pub use pipe_client::{PipeClient, PipeClientError};
 use shared::{Command, SCHEMA_VERSION, ScanEvent};
 use tokio::runtime::{Builder, Runtime};
 use windows::Win32::System::{Antimalware::*, Threading::GetCurrentThreadId};
 
 use super::{Ramsi_Impl, ScanResult};
 use crate::{config::command_name, utils::dump};
-// a worker thread per core in every reporting process is not needed for one
-// pipe
+// one pipe needs no worker thread per core in every reporting process
 static RUNTIME: LazyLock<Option<Runtime>> =
     LazyLock::new(|| Builder::new_current_thread().enable_all().build().ok());
-// logged once per outage, a missing server would otherwise log on every scan
+// a missing or stalled server is logged once per outage, not on every scan
 static CONNECT_FAILED: AtomicBool = AtomicBool::new(false);
 impl Ramsi_Impl {
     pub fn report_script(
@@ -80,7 +79,11 @@ impl Ramsi_Impl {
                     match self.pipe_client.write().await.connect() {
                         Ok(()) => CONNECT_FAILED.store(false, Ordering::Relaxed),
                         Err(err) => {
-                            if !CONNECT_FAILED.swap(true, Ordering::Relaxed) {
+                            let outage = matches!(
+                                err,
+                                PipeClientError::FailedToConnect(..) | PipeClientError::Backoff
+                            );
+                            if !outage || !CONNECT_FAILED.swap(true, Ordering::Relaxed) {
                                 error!("{err}");
                             }
                             return;

@@ -96,11 +96,10 @@ impl Ramsi {
         config: &Config,
         process_info: &ProcessInfo,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let path = config.log_dir.join(format!(
-            "amsi-{}-{}-{}.log",
+        let prefix = config.log_dir.join(format!(
+            "amsi-{}-{}",
             process_info.pid(),
-            process_info.tid(),
-            chrono::Local::now().format("%Y-%m-%d")
+            process_info.tid()
         ));
 
         let mut logger = Dispatch::new().format(|out, message, record| {
@@ -118,7 +117,11 @@ impl Ramsi {
             Dispatch::new()
                 .level(LevelFilter::Off)
                 .level_for(env!("CARGO_CRATE_NAME"), config.log_level)
-                .chain(Box::new(LazyFile { path, file: None }) as Box<dyn Write + Send>),
+                .chain(Box::new(LazyFile {
+                    prefix,
+                    day: String::new(),
+                    file: None,
+                }) as Box<dyn Write + Send>),
         );
 
         logger.apply()?;
@@ -127,22 +130,28 @@ impl Ramsi {
     }
 }
 
-// opened on the first record, so a process with nothing to log leaves no file
+// <prefix>-<date>.log, opened by the first record of each day
 struct LazyFile {
-    path: PathBuf,
+    prefix: PathBuf,
+    day: String,
     file: Option<File>,
 }
 
 impl Write for LazyFile {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        if self.day != today {
+            self.file = None;
+            self.day = today;
+        }
         let file = match &mut self.file {
             Some(file) => file,
-            None => self.file.insert(
-                OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(&self.path)?,
-            ),
+            None => {
+                let mut path = self.prefix.clone().into_os_string();
+                path.push(format!("-{}.log", self.day));
+                self.file
+                    .insert(OpenOptions::new().create(true).append(true).open(path)?)
+            },
         };
         file.write(buf)
     }
@@ -252,10 +261,16 @@ mod tests {
 
     #[test]
     fn log_file_is_created_on_first_write() {
-        let path = std::env::temp_dir().join(format!("ramsi-lazy-{}.log", std::process::id()));
+        let prefix = std::env::temp_dir().join(format!("ramsi-lazy-{}", std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "ramsi-lazy-{}-{}.log",
+            std::process::id(),
+            chrono::Local::now().format("%Y-%m-%d")
+        ));
         let _ = std::fs::remove_file(&path);
         let mut log = LazyFile {
-            path: path.clone(),
+            prefix,
+            day: String::new(),
             file: None,
         };
         log.flush().unwrap();
