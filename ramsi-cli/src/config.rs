@@ -203,6 +203,16 @@ pub fn status() -> DynResult<()> {
         (Ok(dll), false) => println!("COM server registered ({dll}), AMSI provider key missing"),
         (Err(_), _) => println!("Not registered"),
     }
+    let server32 = hklm()
+        .open_subkey_with_flags(
+            format!("Software\\Classes\\CLSID\\{RAMSI_CLSID}\\InProcServer32"),
+            KEY_READ | KEY_WOW64_32KEY,
+        )
+        .and_then(|key| key.get_value::<String, _>(""));
+    match server32 {
+        Ok(dll) => println!("Registered for 32-bit processes: {dll}"),
+        Err(_) => println!("Not registered for 32-bit processes"),
+    }
     show()
 }
 

@@ -123,7 +123,7 @@ fn imp_register_server(pipe_suffix: Option<String>) -> Result<(), Box<dyn std::e
     }
     key.set_value("", &Ramsi::NAME)?;
 
-    let (key, _) = hklm.create_subkey(CONFIG_KEY)?;
+    let (key, _) = hklm.create_subkey_with_flags(CONFIG_KEY, KEY_SET_VALUE | KEY_WOW64_64KEY)?;
     key.set_value(config_value::PIPE, &pipe_name.suffix())?;
     winapi::secure_log_dir(&config::Config::load().log_dir)?;
 
@@ -180,7 +180,7 @@ fn imp_unregister_server() -> Result<(), Box<dyn std::error::Error>> {
     hklm.delete_subkey_all(CLSID_path)?;
 
     // written by register, a temporary pipe must not outlive the registration
-    if let Ok(key) = hklm.open_subkey_with_flags(CONFIG_KEY, KEY_SET_VALUE) {
+    if let Ok(key) = hklm.open_subkey_with_flags(CONFIG_KEY, KEY_SET_VALUE | KEY_WOW64_64KEY) {
         let _ = key.delete_value(config_value::PIPE);
     }
 

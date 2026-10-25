@@ -34,6 +34,10 @@ enum Command {
     Register {
         #[arg(long, default_value = RAMSI_COM_DLL)]
         dll: String,
+        /// The 32-bit provider DLL, for 32-bit processes such as SysWOW64
+        /// PowerShell
+        #[arg(long)]
+        dll32: Option<String>,
         /// Pipe name suffix (\\.\pipe\<SUFFIX>) the provider reports to
         #[arg(long, value_name = "SUFFIX")]
         pipe: Option<String>,
@@ -42,6 +46,8 @@ enum Command {
     Unregister {
         #[arg(long, default_value = RAMSI_COM_DLL)]
         dll: String,
+        #[arg(long)]
+        dll32: Option<String>,
     },
     /// Print events reported by the provider until Ctrl+C
     Trace {
@@ -78,12 +84,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     match Cli::parse().command {
-        Command::Register { dll, pipe } => {
+        Command::Register { dll, dll32, pipe } => {
             let pipe = pipe_suffix(pipe)?;
+            // first, it writes the default pipe that the 64-bit registration then overrides
+            if let Some(dll32) = dll32 {
+                regsvr32(&dll32, false)?;
+            }
             ComWrapper::new(&dll)?.register(&pipe)?;
         },
-        Command::Unregister { dll } => {
+        Command::Unregister { dll, dll32 } => {
             ComWrapper::new(&dll)?.unregister()?;
+            if let Some(dll32) = dll32 {
+                regsvr32(&dll32, true)?;
+            }
         },
         Command::Trace {
             pipe,
@@ -113,6 +126,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     log::debug!("Main finished");
+    Ok(())
+}
+
+// a 32-bit DLL can only be loaded, and so registered, by a 32-bit process
+fn regsvr32(dll: &str, unregister: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let regsvr32 = std::path::Path::new(&std::env::var("SystemRoot")?)
+        .join("SysWOW64")
+        .join("regsvr32.exe");
+    let mut command = std::process::Command::new(regsvr32);
+    command.arg("/s");
+    if unregister {
+        command.arg("/u");
+    }
+    let status = command.arg(std::path::absolute(dll)?).status()?;
+    if !status.success() {
+        return Err(format!("regsvr32 {dll} failed: {status}").into());
+    }
     Ok(())
 }
 
