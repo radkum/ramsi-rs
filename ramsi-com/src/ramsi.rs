@@ -8,7 +8,12 @@ mod rules;
 mod scan;
 
 use core::result::Result;
-use std::sync::{Arc, OnceLock, atomic::AtomicU32};
+use std::{
+    fs::{File, OpenOptions},
+    io::Write,
+    path::PathBuf,
+    sync::{Arc, OnceLock, atomic::AtomicU32},
+};
 
 use antimalware::PsVersion;
 pub use antimalware::ScriptType;
@@ -91,8 +96,12 @@ impl Ramsi {
         config: &Config,
         process_info: &ProcessInfo,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let base = format!("amsi-{}-{}", process_info.pid(), process_info.tid());
-        let log_dir = &config.log_dir;
+        let path = config.log_dir.join(format!(
+            "amsi-{}-{}-{}.log",
+            process_info.pid(),
+            process_info.tid(),
+            chrono::Local::now().format("%Y-%m-%d")
+        ));
 
         let mut logger = Dispatch::new().format(|out, message, record| {
             out.finish(format_args!(
@@ -109,15 +118,37 @@ impl Ramsi {
             Dispatch::new()
                 .level(LevelFilter::Off)
                 .level_for(env!("CARGO_CRATE_NAME"), config.log_level)
-                .chain(fern::DateBased::new(
-                    log_dir,
-                    format!("/{base}-%Y-%m-%d.log"),
-                )),
+                .chain(Box::new(LazyFile { path, file: None }) as Box<dyn Write + Send>),
         );
 
         logger.apply()?;
 
         Ok(())
+    }
+}
+
+// opened on the first record, so a process with nothing to log leaves no file
+struct LazyFile {
+    path: PathBuf,
+    file: Option<File>,
+}
+
+impl Write for LazyFile {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let file = match &mut self.file {
+            Some(file) => file,
+            None => self.file.insert(
+                OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&self.path)?,
+            ),
+        };
+        file.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.file.as_mut().map_or(Ok(()), File::flush)
     }
 }
 
@@ -217,5 +248,23 @@ mod tests {
     #[test]
     fn clsid_matches_shared_constant() {
         assert!(Ramsi::IID().eq_ignore_ascii_case(shared::constants::RAMSI_CLSID));
+    }
+
+    #[test]
+    fn log_file_is_created_on_first_write() {
+        let path = std::env::temp_dir().join(format!("ramsi-lazy-{}.log", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let mut log = LazyFile {
+            path: path.clone(),
+            file: None,
+        };
+        log.flush().unwrap();
+        assert!(!path.exists());
+
+        log.write_all(b"x").unwrap();
+        log.flush().unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"x");
+        drop(log);
+        std::fs::remove_file(&path).unwrap();
     }
 }
