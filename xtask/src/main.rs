@@ -74,8 +74,6 @@ fn dist_binary(
         .join("release")
         .join(binary);
 
-    //println!("dst: {}", dst.display());
-    //println!("dist: {}", dist_dir().join(binary).display());
     fs::copy(&dst, dist_dir().join(dist_name)).unwrap();
 
     // if Command::new("strip")

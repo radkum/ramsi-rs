@@ -188,39 +188,26 @@ fn display(value: RegValue) -> String {
 }
 
 pub fn status() -> DynResult<()> {
-    let server = hklm()
-        .open_subkey(format!(
+    for (view, bits) in [
+        (KEY_WOW64_64KEY, ""),
+        (KEY_WOW64_32KEY, " for 32-bit processes"),
+    ] {
+        let open = |path: String| hklm().open_subkey_with_flags(path, KEY_READ | view);
+        let server = open(format!(
             "Software\\Classes\\CLSID\\{RAMSI_CLSID}\\InProcServer32"
         ))
         .and_then(|key| key.get_value::<String, _>(""));
-    let provider = hklm()
-        .open_subkey(format!(
+        let provider = open(format!(
             "Software\\Microsoft\\AMSI\\Providers\\{RAMSI_CLSID}"
         ))
         .is_ok();
-    match (server, provider) {
-        (Ok(dll), true) => println!("Registered: {dll}"),
-        (Ok(dll), false) => println!("COM server registered ({dll}), AMSI provider key missing"),
-        (Err(_), _) => println!("Not registered"),
-    }
-    let server32 = hklm()
-        .open_subkey_with_flags(
-            format!("Software\\Classes\\CLSID\\{RAMSI_CLSID}\\InProcServer32"),
-            KEY_READ | KEY_WOW64_32KEY,
-        )
-        .and_then(|key| key.get_value::<String, _>(""));
-    let provider32 = hklm()
-        .open_subkey_with_flags(
-            format!("Software\\Microsoft\\AMSI\\Providers\\{RAMSI_CLSID}"),
-            KEY_READ | KEY_WOW64_32KEY,
-        )
-        .is_ok();
-    match (server32, provider32) {
-        (Ok(dll), true) => println!("Registered for 32-bit processes: {dll}"),
-        (Ok(dll), false) => {
-            println!("32-bit COM server registered ({dll}), AMSI provider key missing")
-        },
-        (Err(_), _) => println!("Not registered for 32-bit processes"),
+        match (server, provider) {
+            (Ok(dll), true) => println!("Registered{bits}: {dll}"),
+            (Ok(dll), false) => {
+                println!("COM server registered{bits} ({dll}), AMSI provider key missing")
+            },
+            (Err(_), _) => println!("Not registered{bits}"),
+        }
     }
     show()
 }
