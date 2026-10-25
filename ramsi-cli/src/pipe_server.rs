@@ -17,20 +17,20 @@ use tokio::{
     net::windows::named_pipe::{NamedPipeServer, ServerOptions},
     time::timeout,
 };
-use windows::Win32::{
-    Foundation::{FILETIME, HANDLE, HLOCAL, LocalFree},
-    Security::{
-        Authorization::ConvertSidToStringSidW, GetTokenInformation, SECURITY_ATTRIBUTES,
-        TOKEN_QUERY, TOKEN_USER, TokenUser,
-    },
-    System::{
-        Diagnostics::ToolHelp::{
-            CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
-            TH32CS_SNAPPROCESS,
+use windows::{
+    Wdk::System::Threading::{NtQueryInformationProcess, ProcessBasicInformation},
+    Win32::{
+        Foundation::{FILETIME, HANDLE, HLOCAL, LocalFree},
+        Security::{
+            Authorization::ConvertSidToStringSidW, GetTokenInformation, SECURITY_ATTRIBUTES,
+            TOKEN_QUERY, TOKEN_USER, TokenUser,
         },
-        Pipes::{GetNamedPipeClientProcessId, GetNamedPipeClientSessionId},
-        Threading::{
-            GetProcessTimes, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
+        System::{
+            Pipes::{GetNamedPipeClientProcessId, GetNamedPipeClientSessionId},
+            Threading::{
+                GetProcessTimes, OpenProcess, OpenProcessToken, PROCESS_BASIC_INFORMATION,
+                PROCESS_QUERY_LIMITED_INFORMATION,
+            },
         },
     },
 };
@@ -140,28 +140,27 @@ pub struct ClientIdentity {
 
 impl ClientIdentity {
     pub fn of(pipe: &NamedPipeServer) -> std::io::Result<Self> {
+        let pipe = HANDLE(pipe.as_raw_handle());
         let mut pid = 0;
-        unsafe { GetNamedPipeClientProcessId(HANDLE(pipe.as_raw_handle()), &mut pid)? };
-        let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }
-            .ok()
-            .map(|h| unsafe { OwnedHandle::from_raw_handle(h.0) });
+        unsafe { GetNamedPipeClientProcessId(pipe, &mut pid)? };
+        let process = open_process(pid);
         let handle = process.as_ref().map(|p| HANDLE(p.as_raw_handle()));
         let mut session_id = 0;
-        let session_id =
-            unsafe { GetNamedPipeClientSessionId(HANDLE(pipe.as_raw_handle()), &mut session_id) }
-                .ok()
-                .map(|()| session_id);
-        let created = handle.and_then(created);
+        let session_id = unsafe { GetNamedPipeClientSessionId(pipe, &mut session_id) }
+            .ok()
+            .map(|()| session_id);
+        let ticks = handle.and_then(creation_ticks);
         Ok(Self {
             pid,
-            process_created: created.map(process_created),
+            process_created: ticks.map(process_created),
             user_sid: handle.and_then(user_sid),
-            parent_pid: created.and_then(|created| parent_pid(pid, created)),
+            parent_pid: handle.zip(ticks).and_then(|(h, t)| parent_pid(h, t)),
             session_id,
         })
     }
 
     // false when the event claims another pid, it cannot be trusted
+    #[must_use]
     pub fn apply(&self, event: &mut ScanEvent) -> bool {
         if event.pid != self.pid {
             log::warn!("Client {} sent an event for pid {}", self.pid, event.pid);
@@ -175,8 +174,14 @@ impl ClientIdentity {
     }
 }
 
+fn open_process(pid: u32) -> Option<OwnedHandle> {
+    unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }
+        .ok()
+        .map(|h| unsafe { OwnedHandle::from_raw_handle(h.0) })
+}
+
 // FILETIME ticks, 100 ns since 1601-01-01
-fn created(process: HANDLE) -> Option<u64> {
+fn creation_ticks(process: HANDLE) -> Option<u64> {
     let mut times = [FILETIME::default(); 4];
     let [created, exited, kernel, user] = &mut times;
     unsafe { GetProcessTimes(process, created, exited, kernel, user) }.ok()?;
@@ -192,23 +197,22 @@ fn process_created(ticks: u64) -> String {
 
 // None when the parent is gone, a process created after the child only reuses
 // its pid
-fn parent_pid(pid: u32, child_created: u64) -> Option<u32> {
-    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }.ok()?;
-    let snapshot = unsafe { OwnedHandle::from_raw_handle(snapshot.0) };
-    let snapshot = HANDLE(snapshot.as_raw_handle());
-    let mut entry = PROCESSENTRY32W {
-        dwSize: size_of::<PROCESSENTRY32W>() as u32,
-        ..Default::default()
-    };
-    unsafe { Process32FirstW(snapshot, &mut entry) }.ok()?;
-    while entry.th32ProcessID != pid {
-        unsafe { Process32NextW(snapshot, &mut entry) }.ok()?;
+fn parent_pid(process: HANDLE, child_ticks: u64) -> Option<u32> {
+    let mut info = PROCESS_BASIC_INFORMATION::default();
+    unsafe {
+        NtQueryInformationProcess(
+            process,
+            ProcessBasicInformation,
+            &mut info as *mut _ as _,
+            size_of_val(&info) as u32,
+            &mut 0,
+        )
     }
-    let parent_pid = entry.th32ParentProcessID;
-    let parent = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, parent_pid) }
-        .ok()
-        .map(|h| unsafe { OwnedHandle::from_raw_handle(h.0) })?;
-    (created(HANDLE(parent.as_raw_handle()))? <= child_created).then_some(parent_pid)
+    .ok()
+    .ok()?;
+    let parent_pid = info.InheritedFromUniqueProcessId as u32;
+    let parent = open_process(parent_pid)?;
+    (creation_ticks(HANDLE(parent.as_raw_handle()))? <= child_ticks).then_some(parent_pid)
 }
 
 fn user_sid(process: HANDLE) -> Option<String> {
@@ -293,10 +297,11 @@ mod tests {
             .stdout(std::process::Stdio::null())
             .spawn()
             .unwrap();
-        let created = created(HANDLE(child.as_raw_handle())).unwrap();
-        let parent = parent_pid(child.id(), created);
+        let child_handle = HANDLE(child.as_raw_handle());
+        let ticks = creation_ticks(child_handle).unwrap();
+        let parent = parent_pid(child_handle, ticks);
         // a parent created after the child only reuses the pid
-        let reused = parent_pid(child.id(), 0);
+        let reused = parent_pid(child_handle, 0);
         child.kill().unwrap();
         assert_eq!(parent, Some(std::process::id()));
         assert_eq!(reused, None);

@@ -72,19 +72,20 @@ impl Scanner {
             return result;
         }
 
-        let tokens_res: DynResult<Tokens> = match script_type {
-            ScriptType::PsCommand => {
-                self.parse_tokens(script_content, PowerShellSession::parse_command)
-            },
-            ScriptType::PsScript => {
-                self.parse_tokens(script_content, PowerShellSession::parse_script)
-            },
-            ScriptType::PsDataFile => Err(".psd1 file is not supported".into()),
-            ScriptType::Other => Err("Only powershell scripts are supported".into()),
+        let (tokens_res, parsed): (DynResult<Tokens>, bool) = match script_type {
+            ScriptType::PsCommand => (
+                self.parse_tokens(script_content, PowerShellSession::parse_command),
+                true,
+            ),
+            ScriptType::PsScript => (
+                self.parse_tokens(script_content, PowerShellSession::parse_script),
+                true,
+            ),
+            ScriptType::PsDataFile => (Err(".psd1 file is not supported".into()), false),
+            ScriptType::Other => (Err("Only powershell scripts are supported".into()), false),
         };
 
-        let parse_failed = tokens_res.is_err()
-            && matches!(script_type, ScriptType::PsCommand | ScriptType::PsScript);
+        let parse_failed = parsed && tokens_res.is_err();
         let tokens = tokens_res.unwrap_or_else(|err| {
             debug!("Failed to parse script: {err}");
             let string_set: BTreeSet<String> = Self::tokenize(script_content);
