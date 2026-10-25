@@ -151,16 +151,17 @@ impl ClientIdentity {
             unsafe { GetNamedPipeClientSessionId(HANDLE(pipe.as_raw_handle()), &mut session_id) }
                 .ok()
                 .map(|()| session_id);
+        let created = handle.and_then(created);
         Ok(Self {
             pid,
-            process_created: handle.and_then(process_created),
+            process_created: created.map(process_created),
             user_sid: handle.and_then(user_sid),
-            parent_pid: parent_pid(pid),
+            parent_pid: created.and_then(|created| parent_pid(pid, created)),
             session_id,
         })
     }
 
-    // false when the client lies about its pid, its events cannot be trusted
+    // false when the event claims another pid, it cannot be trusted
     pub fn apply(&self, event: &mut ScanEvent) -> bool {
         if event.pid != self.pid {
             log::warn!("Client {} sent an event for pid {}", self.pid, event.pid);
@@ -174,22 +175,24 @@ impl ClientIdentity {
     }
 }
 
-// with the pid, it tells the process apart from a later one reusing the pid
-fn process_created(process: HANDLE) -> Option<String> {
+// FILETIME ticks, 100 ns since 1601-01-01
+fn created(process: HANDLE) -> Option<u64> {
     let mut times = [FILETIME::default(); 4];
     let [created, exited, kernel, user] = &mut times;
     unsafe { GetProcessTimes(process, created, exited, kernel, user) }.ok()?;
-    let ticks = (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime);
-    // FILETIME counts 100 ns since 1601-01-01
-    let unix_nanos = (ticks as i64 - 116_444_736_000_000_000) * 100;
-    Some(
-        chrono::DateTime::from_timestamp_nanos(unix_nanos)
-            .to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true),
-    )
+    Some((u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime))
 }
 
-// the parent may have exited and its pid been reused
-fn parent_pid(pid: u32) -> Option<u32> {
+// with the pid, it tells the process apart from a later one reusing the pid
+fn process_created(ticks: u64) -> String {
+    let unix_nanos = (ticks as i64 - 116_444_736_000_000_000) * 100;
+    chrono::DateTime::from_timestamp_nanos(unix_nanos)
+        .to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)
+}
+
+// None when the parent is gone, a process created after the child only reuses
+// its pid
+fn parent_pid(pid: u32, child_created: u64) -> Option<u32> {
     let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }.ok()?;
     let snapshot = unsafe { OwnedHandle::from_raw_handle(snapshot.0) };
     let snapshot = HANDLE(snapshot.as_raw_handle());
@@ -201,7 +204,11 @@ fn parent_pid(pid: u32) -> Option<u32> {
     while entry.th32ProcessID != pid {
         unsafe { Process32NextW(snapshot, &mut entry) }.ok()?;
     }
-    Some(entry.th32ParentProcessID)
+    let parent_pid = entry.th32ParentProcessID;
+    let parent = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, parent_pid) }
+        .ok()
+        .map(|h| unsafe { OwnedHandle::from_raw_handle(h.0) })?;
+    (created(HANDLE(parent.as_raw_handle()))? <= child_created).then_some(parent_pid)
 }
 
 fn user_sid(process: HANDLE) -> Option<String> {
@@ -266,12 +273,33 @@ mod tests {
 
         let mut event = event(std::process::id());
         assert!(identity.apply(&mut event));
-        assert!(event.parent_pid.is_some_and(|p| p != std::process::id()));
+        assert!(
+            event
+                .parent_pid
+                .is_some_and(|p| p != 0 && p != std::process::id())
+        );
         assert!(event.session_id.is_some());
         let created = event.process_created.unwrap();
         assert!(created.starts_with("20"), "{created}");
         let sid = event.user_sid.unwrap();
         assert!(sid.starts_with("S-1-5-") && sid != "S-1-5-18", "{sid}");
+    }
+
+    #[test]
+    fn parent_pid_of_a_child_is_this_process() {
+        let mut child = std::process::Command::new("cmd")
+            .args(["/c", "pause"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let created = created(HANDLE(child.as_raw_handle())).unwrap();
+        let parent = parent_pid(child.id(), created);
+        // a parent created after the child only reuses the pid
+        let reused = parent_pid(child.id(), 0);
+        child.kill().unwrap();
+        assert_eq!(parent, Some(std::process::id()));
+        assert_eq!(reused, None);
     }
 
     #[tokio::test]

@@ -116,7 +116,7 @@ Each provider (one per process that loaded it) connects to the pipe and sends on
 
 | Field | Type | Meaning |
 |---|---|---|
-| `version` | number | event schema version, currently `1`; `0` (or missing) from providers older than the field |
+| `version` | number | event schema version, currently `1`, bumped on a breaking change; `0` (or missing) from providers older than the field; adding a field does not bump it, the trace server passes every version through |
 | `time` | string | scan time, RFC 3339 UTC with milliseconds |
 | `pid`, `tid` | number | process and thread that ran the scan |
 | `process` | string | executable file name, e.g. `powershell.exe` |
@@ -132,13 +132,13 @@ Each provider (one per process that loaded it) connects to the pipe and sends on
 | `content_truncated` | bool | `content` was cut |
 | `commands` | array | calls of the configured `commands`, each `{"name": ..., "args": [...]}` with the arguments as the parser evaluated them (variables, splatting, concatenation); parameter names are lowercased, e.g. `{"name": "Register-ScheduledTask", "args": ["-taskname", "Updater"]}` |
 | `commands_truncated` | bool | `commands` was cut, they share `max_content` with `content` and go first |
-| `parse_failed` | bool | the parser could not handle the content (syntax error, non-PowerShell content), so `commands` is empty whatever it calls; allowlisted scripts are not parsed and have it `false` |
+| `parse_failed` | bool | the PowerShell parser could not handle the script (e.g. a syntax error), so `commands` is empty whatever it calls; content that is not PowerShell and allowlisted scripts are not parsed and have it `false` |
 | `process_created` | string or null | creation time of the client process, with `pid` it tells it apart from a later process reusing the pid |
 | `user_sid` | string or null | user of the client process |
-| `parent_pid` | number or null | parent of the client process; the parent may have exited and its pid been reused, and a process can be started with a spoofed parent |
+| `parent_pid` | number or null | parent of the client process, null when the parent has exited (a process created after the client only reuses its pid); a process can be started with a spoofed parent |
 | `session_id` | number or null | Windows session of the client process |
 
-The last four fields are set by the trace server from the pipe client process as the kernel reports it; whatever a provider sends there is overwritten. Any local process can write to the pipe, so the trace server drops a client that sends an event whose `pid` is not its own or whose `version` is newer than the server knows. Fields added later are optional, so a consumer reading older events gets their defaults (`false`, empty, null).
+The last four fields are set by the trace server from the pipe client process as the kernel reports it; whatever a provider sends there is overwritten. Any local process can write to the pipe, so the trace server drops an event whose `pid` is not the pid of the client that sent it. Fields added later are optional, so a consumer reading older events gets their defaults (`false`, empty, null).
 
 ## Uninstallation
 

@@ -83,7 +83,8 @@ impl Scanner {
             ScriptType::Other => Err("Only powershell scripts are supported".into()),
         };
 
-        let parse_failed = tokens_res.is_err();
+        let parse_failed = tokens_res.is_err()
+            && matches!(script_type, ScriptType::PsCommand | ScriptType::PsScript);
         let tokens = tokens_res.unwrap_or_else(|err| {
             debug!("Failed to parse script: {err}");
             let string_set: BTreeSet<String> = Self::tokenize(script_content);
@@ -452,6 +453,11 @@ mod tests {
         let result = scanner.scan("Register-ScheduledTask -TaskName (", ScriptType::PsScript);
         assert!(result.parse_failed && result.commands.is_empty());
         assert!(!scanner.scan("Get-Date", ScriptType::PsScript).parse_failed);
+        assert!(
+            !scanner
+                .scan("WScript.Echo 1", ScriptType::Other)
+                .parse_failed
+        );
     }
 
     fn status(script: &str) -> ScanStatus {

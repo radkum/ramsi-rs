@@ -16,7 +16,7 @@ pub struct Command {
     pub args: Vec<String>,
 }
 
-// bumped on a breaking change, the trace server drops newer events
+// bumped on a breaking change, for consumers to check
 pub const SCHEMA_VERSION: u32 = 1;
 
 // sent by the provider over the pipe as JSON
@@ -50,9 +50,7 @@ pub struct ScanEvent {
     // set by the trace server from the pipe client process, never by the provider
     pub process_created: Option<String>,
     pub user_sid: Option<String>,
-    #[serde(default)]
     pub parent_pid: Option<u32>,
-    #[serde(default)]
     pub session_id: Option<u32>,
 }
 

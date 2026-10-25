@@ -12,7 +12,7 @@ use std::{
 
 use clap::{Parser, Subcommand};
 use com_wrapper::{ComWrapper, RamsiComWrapper};
-use shared::{PipeName, SCHEMA_VERSION, ScanEvent};
+use shared::{PipeName, ScanEvent};
 use tokio::{runtime::Runtime, time::timeout};
 
 use crate::pipe_server::PipeError;
@@ -179,7 +179,6 @@ async fn trace_amsi_events(
         }
 
         let mut connected_client = server;
-        let identity = pipe_server::ClientIdentity::of(&connected_client);
 
         // Construct the next server to be connected before sending the one
         // we already have of onto a task. This ensures that the server
@@ -191,7 +190,7 @@ async fn trace_amsi_events(
         let output = output.clone();
         // ends with the runtime on Ctrl+C
         let _client = tokio::spawn(async move {
-            let identity = match identity {
+            let identity = match pipe_server::ClientIdentity::of(&connected_client) {
                 Ok(identity) => identity,
                 Err(err) => {
                     log::warn!("Dropping client of unknown pid: {err}");
@@ -200,15 +199,10 @@ async fn trace_amsi_events(
             };
             loop {
                 match pipe_server::message::<ScanEvent>(&mut connected_client).await {
-                    Ok(event) if event.version > SCHEMA_VERSION => {
-                        log::warn!("Dropping client: unknown event version {}", event.version);
-                        break;
-                    },
                     Ok(mut event) => {
-                        if !identity.apply(&mut event) {
-                            break;
+                        if identity.apply(&mut event) {
+                            output.print(&event);
                         }
-                        output.print(&event);
                     },
                     Err(PipeError::UnexpectedEof) => break,
                     // the stream is stalled or out of sync, drop the client
