@@ -105,10 +105,40 @@ allowlist_sha256 = ["<sha256 of a script that is always clean>"]
 
 ## Output
 
-- Scan events as JSON over `\\.\pipe\ramsi` (8-byte big-endian length, then the JSON)
+- Scan events as JSON over `\\.\pipe\ramsi` (8-byte big-endian length, then the JSON), see [Event format](#event-format)
 - Logs in `C:\ProgramData\ramsi\amsi-{pid}-{tid}-{date}.log`
 - With `dump` on: `{pid}_{tid}_{requestNumber}_{contentName}.dmp` (and an identical `.txt`) with the scanned content and a `.info` file with its metadata
 - Debug messages via `OutputDebugString`
+
+## Event format
+
+Each provider (one per process that loaded it) connects to the pipe and sends one message per reported scan: an 8-byte big-endian length, then a JSON object. `ramsi-cli trace --json` prints the same object as one line, after the trace server filled in its fields.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `version` | number | event schema version, currently `1`; `0` (or missing) from providers older than the field |
+| `time` | string | scan time, RFC 3339 UTC with milliseconds |
+| `pid`, `tid` | number | process and thread that ran the scan |
+| `process` | string | executable file name, e.g. `powershell.exe` |
+| `cmd_line` | string | command line of the process |
+| `app_name` | string | AMSI app name, e.g. `PowerShell_C:\...\powershell.exe_10.0.19041.1` |
+| `content_name` | string | script path, empty for an interactive command |
+| `session` | number | AMSI session, groups the scans of one script; not the Windows session |
+| `request_number` | number | per-process scan counter, starting at 1 |
+| `status` | string | `clean` (allowlisted), `detected`, `suspicious` or `not_detected` |
+| `reason` | string or null | what the heuristic matched |
+| `blocked` | bool | the provider returned `AMSI_RESULT_DETECTED` |
+| `content` | string | scanned script, cut to `max_content` bytes |
+| `content_truncated` | bool | `content` was cut |
+| `commands` | array | calls of the configured `commands`, each `{"name": ..., "args": [...]}` with the arguments as the parser evaluated them (variables, splatting, concatenation); parameter names are lowercased, e.g. `{"name": "Register-ScheduledTask", "args": ["-taskname", "Updater"]}` |
+| `commands_truncated` | bool | `commands` was cut, they share `max_content` with `content` and go first |
+| `parse_failed` | bool | the parser could not handle the content (syntax error, non-PowerShell content), so `commands` is empty whatever it calls; allowlisted scripts are not parsed and have it `false` |
+| `process_created` | string or null | creation time of the client process, with `pid` it tells it apart from a later process reusing the pid |
+| `user_sid` | string or null | user of the client process |
+| `parent_pid` | number or null | parent of the client process; the parent may have exited and its pid been reused, and a process can be started with a spoofed parent |
+| `session_id` | number or null | Windows session of the client process |
+
+The last four fields are set by the trace server from the pipe client process as the kernel reports it; whatever a provider sends there is overwritten. Any local process can write to the pipe, so the trace server drops a client that sends an event whose `pid` is not its own or whose `version` is newer than the server knows. Fields added later are optional, so a consumer reading older events gets their defaults (`false`, empty, null).
 
 ## Uninstallation
 

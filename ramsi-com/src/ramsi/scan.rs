@@ -16,6 +16,7 @@ pub struct ScanResult {
     pub status: ScanStatus,
     pub reason: Option<String>,
     pub commands: Vec<CommandToken>,
+    pub parse_failed: bool,
 }
 
 impl ScanResult {
@@ -24,6 +25,7 @@ impl ScanResult {
             status,
             reason: Some(reason),
             commands: Vec::new(),
+            parse_failed: false,
         }
     }
 }
@@ -81,6 +83,7 @@ impl Scanner {
             ScriptType::Other => Err("Only powershell scripts are supported".into()),
         };
 
+        let parse_failed = tokens_res.is_err();
         let tokens = tokens_res.unwrap_or_else(|err| {
             debug!("Failed to parse script: {err}");
             let string_set: BTreeSet<String> = Self::tokenize(script_content);
@@ -105,6 +108,7 @@ impl Scanner {
 
         let mut result = self.heuristic_scan(&tokens);
         result.commands = tokens.commands;
+        result.parse_failed = parse_failed;
         result
     }
 
@@ -225,6 +229,7 @@ impl Scanner {
             status: ScanStatus::NotDetected,
             reason: None,
             commands: Vec::new(),
+            parse_failed: false,
         }
     }
 
@@ -439,6 +444,14 @@ mod tests {
             .find(|c| c.name().eq_ignore_ascii_case("register-scheduledtask"))
             .unwrap();
         assert_eq!(command.args(), &["-taskname", "Updater"]);
+    }
+
+    #[test]
+    fn parse_failure_is_flagged() {
+        let scanner = Scanner::default();
+        let result = scanner.scan("Register-ScheduledTask -TaskName (", ScriptType::PsScript);
+        assert!(result.parse_failed && result.commands.is_empty());
+        assert!(!scanner.scan("Get-Date", ScriptType::PsScript).parse_failed);
     }
 
     fn status(script: &str) -> ScanStatus {

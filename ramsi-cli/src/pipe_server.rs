@@ -24,7 +24,11 @@ use windows::Win32::{
         TOKEN_QUERY, TOKEN_USER, TokenUser,
     },
     System::{
-        Pipes::GetNamedPipeClientProcessId,
+        Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+            TH32CS_SNAPPROCESS,
+        },
+        Pipes::{GetNamedPipeClientProcessId, GetNamedPipeClientSessionId},
         Threading::{
             GetProcessTimes, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
         },
@@ -130,6 +134,8 @@ pub struct ClientIdentity {
     pid: u32,
     process_created: Option<String>,
     user_sid: Option<String>,
+    parent_pid: Option<u32>,
+    session_id: Option<u32>,
 }
 
 impl ClientIdentity {
@@ -140,20 +146,31 @@ impl ClientIdentity {
             .ok()
             .map(|h| unsafe { OwnedHandle::from_raw_handle(h.0) });
         let handle = process.as_ref().map(|p| HANDLE(p.as_raw_handle()));
+        let mut session_id = 0;
+        let session_id =
+            unsafe { GetNamedPipeClientSessionId(HANDLE(pipe.as_raw_handle()), &mut session_id) }
+                .ok()
+                .map(|()| session_id);
         Ok(Self {
             pid,
             process_created: handle.and_then(process_created),
             user_sid: handle.and_then(user_sid),
+            parent_pid: parent_pid(pid),
+            session_id,
         })
     }
 
-    pub fn apply(&self, event: &mut ScanEvent) {
+    // false when the client lies about its pid, its events cannot be trusted
+    pub fn apply(&self, event: &mut ScanEvent) -> bool {
         if event.pid != self.pid {
             log::warn!("Client {} sent an event for pid {}", self.pid, event.pid);
-            event.pid = self.pid;
+            return false;
         }
         event.process_created = self.process_created.clone();
         event.user_sid = self.user_sid.clone();
+        event.parent_pid = self.parent_pid;
+        event.session_id = self.session_id;
+        true
     }
 }
 
@@ -169,6 +186,22 @@ fn process_created(process: HANDLE) -> Option<String> {
         chrono::DateTime::from_timestamp_nanos(unix_nanos)
             .to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true),
     )
+}
+
+// the parent may have exited and its pid been reused
+fn parent_pid(pid: u32) -> Option<u32> {
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }.ok()?;
+    let snapshot = unsafe { OwnedHandle::from_raw_handle(snapshot.0) };
+    let snapshot = HANDLE(snapshot.as_raw_handle());
+    let mut entry = PROCESSENTRY32W {
+        dwSize: size_of::<PROCESSENTRY32W>() as u32,
+        ..Default::default()
+    };
+    unsafe { Process32FirstW(snapshot, &mut entry) }.ok()?;
+    while entry.th32ProcessID != pid {
+        unsafe { Process32NextW(snapshot, &mut entry) }.ok()?;
+    }
+    Some(entry.th32ParentProcessID)
 }
 
 fn user_sid(process: HANDLE) -> Option<String> {
@@ -220,17 +253,21 @@ mod tests {
         server.connect().await.unwrap();
 
         let identity = ClientIdentity::of(&server).unwrap();
-        let mut event: ScanEvent = serde_json::from_str(&format!(
-            r#"{{"time":"","pid":{},"tid":0,"process":"","cmd_line":"","app_name":"",
-            "content_name":"","session":0,"request_number":0,"status":"detected",
-            "reason":null,"blocked":false,"content":"","content_truncated":false,
-            "process_created":"forged","user_sid":"S-1-5-18"}}"#,
-            std::process::id() + 4
-        ))
-        .unwrap();
-        identity.apply(&mut event);
+        let event = |pid: u32| -> ScanEvent {
+            serde_json::from_str(&format!(
+                r#"{{"time":"","pid":{pid},"tid":0,"process":"","cmd_line":"","app_name":"",
+                "content_name":"","session":0,"request_number":0,"status":"detected",
+                "reason":null,"blocked":false,"content":"","content_truncated":false,
+                "process_created":"forged","user_sid":"S-1-5-18"}}"#
+            ))
+            .unwrap()
+        };
+        assert!(!identity.apply(&mut event(std::process::id() + 4)));
 
-        assert_eq!(event.pid, std::process::id());
+        let mut event = event(std::process::id());
+        assert!(identity.apply(&mut event));
+        assert!(event.parent_pid.is_some_and(|p| p != std::process::id()));
+        assert!(event.session_id.is_some());
         let created = event.process_created.unwrap();
         assert!(created.starts_with("20"), "{created}");
         let sid = event.user_sid.unwrap();

@@ -12,7 +12,7 @@ use std::{
 
 use clap::{Parser, Subcommand};
 use com_wrapper::{ComWrapper, RamsiComWrapper};
-use shared::{PipeName, ScanEvent};
+use shared::{PipeName, SCHEMA_VERSION, ScanEvent};
 use tokio::{runtime::Runtime, time::timeout};
 
 use crate::pipe_server::PipeError;
@@ -200,8 +200,14 @@ async fn trace_amsi_events(
             };
             loop {
                 match pipe_server::message::<ScanEvent>(&mut connected_client).await {
+                    Ok(event) if event.version > SCHEMA_VERSION => {
+                        log::warn!("Dropping client: unknown event version {}", event.version);
+                        break;
+                    },
                     Ok(mut event) => {
-                        identity.apply(&mut event);
+                        if !identity.apply(&mut event) {
+                            break;
+                        }
                         output.print(&event);
                     },
                     Err(PipeError::UnexpectedEof) => break,

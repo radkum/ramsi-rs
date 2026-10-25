@@ -3,7 +3,7 @@ use std::sync::{LazyLock, atomic::Ordering};
 
 use log::{debug, error};
 pub use pipe_client::PipeClient;
-use shared::{Command, ScanEvent};
+use shared::{Command, SCHEMA_VERSION, ScanEvent};
 use tokio::runtime::Runtime;
 use windows::Win32::System::{Antimalware::*, Threading::GetCurrentThreadId};
 
@@ -22,6 +22,7 @@ impl Ramsi_Impl {
     ) {
         let process_info = &self.process_info;
         let mut amsi_event = ScanEvent {
+            version: SCHEMA_VERSION,
             time: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
             pid: process_info.pid(),
             tid: unsafe { GetCurrentThreadId() },
@@ -45,8 +46,11 @@ impl Ramsi_Impl {
                 })
                 .collect(),
             commands_truncated: false,
+            parse_failed: result.parse_failed,
             process_created: None,
             user_sid: None,
+            parent_pid: None,
+            session_id: None,
         };
 
         debug!("{}", amsi_event);

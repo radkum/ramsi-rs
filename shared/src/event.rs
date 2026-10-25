@@ -16,9 +16,15 @@ pub struct Command {
     pub args: Vec<String>,
 }
 
+// bumped on a breaking change, the trace server drops newer events
+pub const SCHEMA_VERSION: u32 = 1;
+
 // sent by the provider over the pipe as JSON
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ScanEvent {
+    // older providers do not send it, they are version 0
+    #[serde(default)]
+    pub version: u32,
     pub time: String,
     pub pid: u32,
     pub tid: u32,
@@ -38,9 +44,16 @@ pub struct ScanEvent {
     pub commands: Vec<Command>,
     #[serde(default)]
     pub commands_truncated: bool,
+    // the parser failed, so commands is empty whatever the script calls
+    #[serde(default)]
+    pub parse_failed: bool,
     // set by the trace server from the pipe client process, never by the provider
     pub process_created: Option<String>,
     pub user_sid: Option<String>,
+    #[serde(default)]
+    pub parent_pid: Option<u32>,
+    #[serde(default)]
+    pub session_id: Option<u32>,
 }
 
 impl ScanEvent {
@@ -106,6 +119,7 @@ mod tests {
 
     fn event(content: &str) -> ScanEvent {
         ScanEvent {
+            version: SCHEMA_VERSION,
             time: "2026-10-22T10:00:00Z".into(),
             pid: 1,
             tid: 2,
@@ -122,8 +136,11 @@ mod tests {
             content_truncated: false,
             commands: Vec::new(),
             commands_truncated: false,
+            parse_failed: false,
             process_created: None,
             user_sid: None,
+            parent_pid: None,
+            session_id: None,
         }
     }
 
