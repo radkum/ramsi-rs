@@ -153,6 +153,10 @@ A configured command is matched, case-insensitively and with or without its modu
 
 Not matched: calls through an alias or `& (Get-Command ...)`, allowlisted scripts and scripts that fail to parse (`parse_failed`).
 
+## Trust model
+
+The provider runs inside every process that calls AMSI, including unelevated ones, so any local user can write to the pipe. That process controls its own memory: it can send any `content` and `commands`, or bypass AMSI altogether, as with any AMSI provider. Only the fields the trace server takes from the kernel (`pid`, `process_created`, `user_sid`, `parent_pid`, `session_id`) can be trusted. Treat `content` and `commands` as telemetry the process reported, not as proof of what it ran.
+
 ## Performance
 
 Measured on a 2-vCPU Windows 10 VM with Defender and another AMSI provider installed, ramsi added on top (medians):
@@ -220,5 +224,5 @@ With `--target i686-pc-windows-msvc` and `RAMSI_DLL` set to `ramsi_com32.dll`, t
 
 ## License
 
-Licensed under MIT.
+Licensed under the MIT Non-Commercial License: commercial use requires written permission from the copyright holder.
 See [LICENSE_MIT](LICENSE_MIT) for details.
