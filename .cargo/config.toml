@@ -1,3 +1,7 @@
 [alias]
 xtask = "run --package xtask --"
 cli = "run --package ramsi-cli --"
+
+# no VC++ redistributable on the target machine, the provider would silently fail to load
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
