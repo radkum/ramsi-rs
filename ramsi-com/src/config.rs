@@ -5,7 +5,10 @@ use shared::{
     PipeName,
     constants::{CONFIG_KEY, DEFAULT_LOG_DIR, MAX_CONTENT_LIMIT, RAMSI_PIPE_SUFFIX, config_value},
 };
-use winreg::{RegKey, enums::HKEY_LOCAL_MACHINE};
+use winreg::{
+    RegKey,
+    enums::{HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_64KEY},
+};
 
 use crate::ScanStatus;
 
@@ -58,7 +61,10 @@ impl Default for Config {
 impl Config {
     // missing or invalid values fall back to defaults
     pub fn load() -> Self {
-        match RegKey::predef(HKEY_LOCAL_MACHINE).open_subkey(CONFIG_KEY) {
+        // the 32-bit provider reads the same key, not its WOW6432Node copy
+        match RegKey::predef(HKEY_LOCAL_MACHINE)
+            .open_subkey_with_flags(CONFIG_KEY, KEY_READ | KEY_WOW64_64KEY)
+        {
             Ok(key) => Self::from_key(&key),
             Err(_) => Self::default(),
         }

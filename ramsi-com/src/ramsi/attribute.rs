@@ -70,7 +70,8 @@ impl Ramsi_Impl {
             // not in memory: read it from the stream, possibly in chunks
             let mut total = 0;
             while total < content_size {
-                let end = content_size.min(total + u32::MAX as usize);
+                // saturating: usize::MAX is u32::MAX in a 32-bit process
+                let end = content_size.min(total.saturating_add(u32::MAX as usize));
                 let mut read_size: u32 = 0;
                 if let Err(err) =
                     unsafe { s.Read(total as u64, &mut out_buf[total..end], &mut read_size) }
@@ -153,10 +154,12 @@ mod tests {
                 AMSI_ATTRIBUTE_CONTENT_ADDRESS => 0,
                 _ => return Err(windows_core::Error::empty()),
             };
-            assert_eq!(datasize as usize, size_of::<u64>());
+            // the address is pointer-sized, 4 bytes in a 32-bit process
+            let len = datasize as usize;
+            assert!(len <= size_of::<u64>());
             unsafe {
-                std::ptr::write_unaligned(data as *mut u64, value);
-                *retdata = size_of::<u64>() as u32;
+                std::ptr::copy_nonoverlapping(value.to_le_bytes().as_ptr(), data, len);
+                *retdata = len as u32;
             }
             Ok(())
         }

@@ -34,6 +34,9 @@ enum Command {
     Register {
         #[arg(long, default_value = RAMSI_COM_DLL)]
         dll: String,
+        /// The 32-bit provider DLL, for SysWOW64 PowerShell
+        #[arg(long)]
+        dll32: Option<String>,
         /// Pipe name suffix (\\.\pipe\<SUFFIX>) the provider reports to
         #[arg(long, value_name = "SUFFIX")]
         pipe: Option<String>,
@@ -42,6 +45,8 @@ enum Command {
     Unregister {
         #[arg(long, default_value = RAMSI_COM_DLL)]
         dll: String,
+        #[arg(long)]
+        dll32: Option<String>,
     },
     /// Print events reported by the provider until Ctrl+C
     Trace {
@@ -78,12 +83,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     match Cli::parse().command {
-        Command::Register { dll, pipe } => {
+        Command::Register { dll, dll32, pipe } => {
             let pipe = pipe_suffix(pipe)?;
+            if let Some(dll32) = dll32 {
+                regsvr32(&dll32, false)?;
+            }
             ComWrapper::new(&dll)?.register(&pipe)?;
         },
-        Command::Unregister { dll } => {
-            ComWrapper::new(&dll)?.unregister()?;
+        Command::Unregister { dll, dll32 } => {
+            // both are tried, a failed one must not leave the other registered
+            let unregistered = ComWrapper::new(&dll).and_then(|com| com.unregister());
+            if let Some(dll32) = dll32 {
+                regsvr32(&dll32, true)?;
+            }
+            unregistered?;
         },
         Command::Trace {
             pipe,
@@ -113,6 +126,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     log::debug!("Main finished");
+    Ok(())
+}
+
+// a 32-bit DLL can only be loaded, and so registered, by a 32-bit process
+fn regsvr32(dll: &str, unregister: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let regsvr32 = std::path::Path::new(&std::env::var("SystemRoot")?)
+        .join("SysWOW64")
+        .join("regsvr32.exe");
+    let mut command = std::process::Command::new(regsvr32);
+    command.arg("/s");
+    if unregister {
+        command.arg("/u");
+    }
+    let status = command.arg(std::path::absolute(dll)?).status()?;
+    if !status.success() {
+        return Err(format!("regsvr32 {dll} failed: {status}").into());
+    }
     Ok(())
 }
 
@@ -179,6 +209,8 @@ async fn trace_amsi_events(
         }
 
         let mut connected_client = server;
+        // read now, a short-lived client may exit before the task runs
+        let identity = pipe_server::ClientIdentity::of(&connected_client);
 
         // Construct the next server to be connected before sending the one
         // we already have of onto a task. This ensures that the server
@@ -190,7 +222,7 @@ async fn trace_amsi_events(
         let output = output.clone();
         // ends with the runtime on Ctrl+C
         let _client = tokio::spawn(async move {
-            let identity = match pipe_server::ClientIdentity::of(&connected_client) {
+            let identity = match identity {
                 Ok(identity) => identity,
                 Err(err) => {
                     log::warn!("Dropping client of unknown pid: {err}");

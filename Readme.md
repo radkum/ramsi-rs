@@ -26,14 +26,16 @@ To build the project and prepare distributable binaries:
 cargo xtask dist
 ```
 
-This will produce `ramsi_com.dll` and `ramsi-cli.exe` in the `dist` directory.
+This will produce `ramsi_com.dll`, `ramsi_com32.dll` (the provider for 32-bit processes) and `ramsi-cli.exe` in the `dist` directory. The CRT is linked statically, so no VC++ redistributable is needed.
 
 ## Installation
 
 From an elevated prompt, register the provider with `ramsi-cli.exe`:
 ```sh
-ramsi-cli.exe register --dll ramsi_com.dll
+ramsi-cli.exe register --dll ramsi_com.dll --dll32 ramsi_com32.dll
 ```
+
+Without `--dll32`, 32-bit processes such as `C:\Windows\SysWOW64\WindowsPowerShell\v1.0\powershell.exe` are not scanned. Both providers read the same configuration.
 
 Registration (also through `regsvr32`) creates the log directory owned by Administrators, with an ACL that lets users create their own log files but not read other users' ones. Providers write logs and dumps only to a directory owned by Administrators or SYSTEM.
 
@@ -106,7 +108,7 @@ allowlist_sha256 = ["<sha256 of a script that is always clean>"]
 ## Output
 
 - Scan events as JSON over `\\.\pipe\ramsi` (8-byte big-endian length, then the JSON), see [Event format](#event-format)
-- Logs in `C:\ProgramData\ramsi\amsi-{pid}-{tid}-{date}.log`
+- Logs in `C:\ProgramData\ramsi\amsi-{pid}-{tid}-{date}.log`, created only by a process that logs something; a missing trace server is logged once per process until it connects
 - With `dump` on: `{pid}_{tid}_{requestNumber}_{contentName}.dmp` (and an identical `.txt`) with the scanned content and a `.info` file with its metadata
 - Debug messages via `OutputDebugString`
 
@@ -163,11 +165,23 @@ Measured on a 2-vCPU Windows 10 VM with Defender and another AMSI provider insta
 
 That is about 30 ms per process start and 1.3 ms per scan, plus about 1 ms per reported event. No trace server adds nothing measurable; a server that stops reading costs a reporting process 500 ms once, then it stops sending for 30 s. In every case scripts ran with the same output and exit code.
 
+## Integration
+
+A consumer such as shem reads events as JSON lines from `ramsi-cli trace --json`, run as an elevated child process:
+
+```sh
+ramsi-cli.exe register --dll ramsi_com.dll --dll32 ramsi_com32.dll
+ramsi-cli.exe config set commands "Register-ScheduledTask"
+ramsi-cli.exe trace --json
+```
+
+The trace server checks each event against the pipe client process and fills in `process_created`, `user_sid`, `parent_pid` and `session_id` (see [Event format](#event-format)), so a consumer should not read the pipe directly. Configuration is read when a process loads the provider, so changes apply to processes started afterwards. Events reported while no trace server runs are lost; a provider reconnects on its next reported scan.
+
 ## Uninstallation
 
 Unregister the AMSI provider with `ramsi-cli.exe`:
 ```sh
-ramsi-cli.exe unregister --dll ramsi_com.dll
+ramsi-cli.exe unregister --dll ramsi_com.dll --dll32 ramsi_com32.dll
 ```
 
 With `regsvr32`
@@ -181,6 +195,7 @@ regsvr32 /u dist\ramsi_com.dll
 
 ```sh
 cargo test --workspace
+cargo test -p ramsi-com --target i686-pc-windows-msvc --lib --test samples
 ```
 
 Pipe tests need an elevated prompt; set `RAMSI_TEST_USER` and `RAMSI_TEST_PASSWORD` to a standard local account to also test a client running as another user. `ramsi-com/tests/samples/{benign,suspicious,detected}` hold sample scripts checked by `tests/samples.rs`. The end-to-end test registers the DLL machine-wide, so run it elevated on a disposable VM only:
@@ -188,6 +203,8 @@ Pipe tests need an elevated prompt; set `RAMSI_TEST_USER` and `RAMSI_TEST_PASSWO
 ```sh
 cargo test -p ramsi-com --test e2e -- --ignored
 ```
+
+With `--target i686-pc-windows-msvc` and `RAMSI_DLL` set to `ramsi_com32.dll`, the same test checks the 32-bit provider in 32-bit PowerShell.
 
 ## Project Structure
 
@@ -199,7 +216,6 @@ cargo test -p ramsi-com --test e2e -- --ignored
 
 ## Future plans
 - add certificate
-- support for win32
 - log to event viewer
 
 ## License

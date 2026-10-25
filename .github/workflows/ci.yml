@@ -13,6 +13,7 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      - run: cargo test -p ramsi-com --target i686-pc-windows-msvc --lib --test samples
       - run: cargo xtask dist
       - uses: actions/upload-artifact@v4
         with:

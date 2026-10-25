@@ -8,7 +8,12 @@ mod rules;
 mod scan;
 
 use core::result::Result;
-use std::sync::{Arc, OnceLock, atomic::AtomicU32};
+use std::{
+    fs::{File, OpenOptions},
+    io::Write,
+    path::PathBuf,
+    sync::{Arc, OnceLock, atomic::AtomicU32},
+};
 
 use antimalware::PsVersion;
 pub use antimalware::ScriptType;
@@ -91,8 +96,11 @@ impl Ramsi {
         config: &Config,
         process_info: &ProcessInfo,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let base = format!("amsi-{}-{}", process_info.pid(), process_info.tid());
-        let log_dir = &config.log_dir;
+        let prefix = config.log_dir.join(format!(
+            "amsi-{}-{}",
+            process_info.pid(),
+            process_info.tid()
+        ));
 
         let mut logger = Dispatch::new().format(|out, message, record| {
             out.finish(format_args!(
@@ -109,14 +117,54 @@ impl Ramsi {
             Dispatch::new()
                 .level(LevelFilter::Off)
                 .level_for(env!("CARGO_CRATE_NAME"), config.log_level)
-                .chain(fern::DateBased::new(
-                    log_dir,
-                    format!("/{base}-%Y-%m-%d.log"),
-                )),
+                .chain(Box::new(LazyFile::new(prefix)) as Box<dyn Write + Send>),
         );
 
         logger.apply()?;
 
+        Ok(())
+    }
+}
+
+// <prefix>-<date>.log, opened by the first record of each day
+struct LazyFile {
+    prefix: PathBuf,
+    // fern writes a record in pieces, then flushes it
+    record: Vec<u8>,
+    file: Option<(String, File)>,
+}
+
+impl LazyFile {
+    fn new(prefix: PathBuf) -> Self {
+        Self {
+            prefix,
+            record: Vec::new(),
+            file: None,
+        }
+    }
+}
+
+impl Write for LazyFile {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.record.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        if self.record.is_empty() {
+            return Ok(());
+        }
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        if self.file.as_ref().is_none_or(|(day, _)| *day != today) {
+            let mut path = self.prefix.clone().into_os_string();
+            path.push(format!("-{today}.log"));
+            let file = OpenOptions::new().create(true).append(true).open(path)?;
+            self.file = Some((today, file));
+        }
+        if let Some((_, file)) = &mut self.file {
+            file.write_all(&self.record)?;
+        }
+        self.record.clear();
         Ok(())
     }
 }
@@ -217,5 +265,26 @@ mod tests {
     #[test]
     fn clsid_matches_shared_constant() {
         assert!(Ramsi::IID().eq_ignore_ascii_case(shared::constants::RAMSI_CLSID));
+    }
+
+    #[test]
+    fn log_file_is_created_on_first_write() {
+        let prefix = std::env::temp_dir().join(format!("ramsi-lazy-{}", std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "ramsi-lazy-{}-{}.log",
+            std::process::id(),
+            chrono::Local::now().format("%Y-%m-%d")
+        ));
+        let _ = std::fs::remove_file(&path);
+        let mut log = LazyFile::new(prefix);
+        log.flush().unwrap();
+        assert!(!path.exists());
+
+        log.write_all(b"x").unwrap();
+        assert!(!path.exists());
+        log.flush().unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"x");
+        drop(log);
+        std::fs::remove_file(&path).unwrap();
     }
 }
