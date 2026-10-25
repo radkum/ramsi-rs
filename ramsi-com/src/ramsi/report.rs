@@ -8,7 +8,7 @@ use tokio::runtime::Runtime;
 use windows::Win32::System::{Antimalware::*, Threading::GetCurrentThreadId};
 
 use super::{Ramsi_Impl, ScanResult};
-use crate::utils::dump;
+use crate::{config::command_name, utils::dump};
 static RUNTIME: LazyLock<Option<Runtime>> = LazyLock::new(|| Runtime::new().ok());
 impl Ramsi_Impl {
     pub fn report_script(
@@ -37,14 +37,17 @@ impl Ramsi_Impl {
             blocked,
             content,
             content_truncated: false,
-            commands: result
-                .commands
-                .iter()
-                .map(|c| Command {
-                    name: c.name().clone(),
+            // a command in a function or script block is tokenized again for each call
+            commands: result.commands.iter().fold(Vec::new(), |mut commands, c| {
+                let command = Command {
+                    name: command_name(c.name()),
                     args: c.args().clone(),
-                })
-                .collect(),
+                };
+                if !commands.contains(&command) {
+                    commands.push(command);
+                }
+                commands
+            }),
             commands_truncated: false,
             parse_failed: result.parse_failed,
             process_created: None,

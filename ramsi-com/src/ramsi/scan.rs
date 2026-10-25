@@ -449,6 +449,46 @@ mod tests {
     }
 
     #[test]
+    fn obfuscated_and_nested_calls_match_a_configured_command() {
+        let config = crate::config::Config {
+            commands: vec!["register-scheduledtask".into()],
+            ..Default::default()
+        };
+        // Register-ScheduledTask -TaskName 'Upd' -Action $a
+        let enc = "UgBlAGcAaQBzAHQAZQByAC0AUwBjAGgAZQBkAHUAbABlAGQAVABhAHMAawAgAC0AVABhAHMAawBOAGEA\
+                   bQBlACAAJwBVAHAAZAAnACAALQBBAGMAdABpAG8AbgAgACQAYQA=";
+        for script in [
+            "Register-ScheduledTask -TaskName 'Upd' -Action $action",
+            "register-scheduledtask -taskname upd",
+            r"ScheduledTasks\Register-ScheduledTask -TaskName 'Upd'",
+            "Register-ScheduledTask 'Upd' -Action $a",
+            "$p = @{ TaskName = 'Up' + 'd' }; Register-ScheduledTask @p",
+            "New-ScheduledTask -Action $a | Register-ScheduledTask -TaskName 'Upd'",
+            "& ('Register-' + 'ScheduledTask') -TaskName 'Upd'",
+            ".('Reg' + 'ister-ScheduledTask') -TaskName 'Upd'",
+            "$c = 'Register-ScheduledTask'; & $c -TaskName 'Upd'",
+            "& ('{1}-{0}' -f 'ScheduledTask', 'Register') -TaskName 'Upd'",
+            "Reg`ister-Schedu`ledTask -TaskName 'Upd'",
+            "try { Register-ScheduledTask -TaskName 'Upd' } catch { }",
+            "foreach ($i in 1..2) { Register-ScheduledTask -TaskName \"Upd$i\" }",
+            "function f { Register-ScheduledTask -TaskName 'Upd' }; f",
+            "& { Register-ScheduledTask -TaskName 'Upd' }",
+            &format!("powershell -EncodedCommand {enc}"),
+            &format!("powershell.exe -enc {enc}"),
+        ] {
+            let result = Scanner::default().scan(script, ScriptType::PsScript);
+            assert!(
+                result
+                    .commands
+                    .iter()
+                    .any(|c| config.reports_command(c.name())),
+                "{script}: {:?}",
+                result.commands
+            );
+        }
+    }
+
+    #[test]
     fn parse_failure_is_flagged() {
         let scanner = Scanner::default();
         let result = scanner.scan("Register-ScheduledTask -TaskName (", ScriptType::PsScript);

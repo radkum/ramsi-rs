@@ -1151,9 +1151,9 @@ dependencies = [
 
 [[package]]
 name = "ps-parser"
-version = "1.2.1"
+version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "876819d65269a33d31c108f45b4d60f4b385861f6860d5d1f6f1484fb65a6852"
+checksum = "f209e766dc582e72fb0fa475110c48b0838bfded944800e8fbfa3e4f62f162ed"
 dependencies = [
  "base64",
  "configparser",

@@ -73,8 +73,9 @@ impl Config {
     }
 
     pub fn reports_command(&self, name: &str) -> bool {
+        let name = command_name(name);
         // Module\Command calls the same command
-        let name = name.rsplit('\\').next().unwrap_or(name);
+        let name = name.rsplit('\\').next().unwrap_or(&name);
         self.report && self.commands.iter().any(|c| c.eq_ignore_ascii_case(name))
     }
 
@@ -152,6 +153,11 @@ fn reaches(status: ScanStatus, lowest: ScanStatus) -> bool {
         ScanStatus::Suspicious => lowest != ScanStatus::Detected,
         ScanStatus::Clean | ScanStatus::NotDetected => lowest == ScanStatus::NotDetected,
     }
+}
+
+// an expression call like & ('a' + 'b') quotes the name, backticks only escape
+pub fn command_name(name: &str) -> String {
+    name.trim_matches(['"', '\'']).replace('`', "")
 }
 
 // lowercase, ';'-separated, empty entries dropped
@@ -307,6 +313,8 @@ mod tests {
         assert!(config.reports_command("Register-ScheduledTask"));
         assert!(config.reports_command("ScheduledTasks\\Register-ScheduledTask"));
         assert!(!config.reports_command("Get-ScheduledTask"));
+        assert!(config.reports_command("\"Register-ScheduledTask\""));
+        assert!(config.reports_command("Reg`ister-ScheduledTask"));
 
         let off = Config {
             report: false,
