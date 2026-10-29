@@ -1,0 +1,27 @@
+[package]
+name = "ramsi-consumer"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+shared = { path = "../shared" }
+
+log = "0.4.27"
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+windows-core = { workspace = true }
+
+[dependencies.windows]
+workspace = true
+features = [
+    "Wdk_System_Threading",
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Kernel",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+]

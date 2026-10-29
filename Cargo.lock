@@ -1189,6 +1189,7 @@ dependencies = [
  "ctrlc",
  "env_logger",
  "log",
+ "ramsi-consumer",
  "serde",
  "serde_json",
  "shared",
@@ -1221,6 +1222,21 @@ dependencies = [
  "windows",
  "windows-core",
  "winreg",
+]
+
+[[package]]
+name = "ramsi-consumer"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "log",
+ "serde",
+ "serde_json",
+ "shared",
+ "thiserror",
+ "tokio",
+ "windows",
+ "windows-core",
 ]
 
 [[package]]
