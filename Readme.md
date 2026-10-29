@@ -82,6 +82,7 @@ ramsi-cli.exe config unset mode
 |---|---|---|
 | `mode` | `monitor` | `monitor` reports only, `block` also returns `AMSI_RESULT_DETECTED` |
 | `block_on` | `detected` | lowest status blocked in block mode: `detected` or `suspicious` |
+| `block_pids_file` | none | in block mode, block only the pids listed here (whitespace-separated); any other process is reported only, and a missing file blocks nothing |
 | `report` | `1` | send events to the pipe |
 | `report_on` | `suspicious` | lowest status reported: `detected`, `suspicious` or `all` (every scan, including clean ones) |
 | `commands` | none | `;`-separated commands, e.g. `Register-ScheduledTask`; a script calling one is reported whatever its status, with the command's arguments as the parser evaluated them; see [Command matching](#command-matching) |

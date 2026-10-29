@@ -45,6 +45,7 @@ const VALUES: &[(&str, Kind)] = &[
     (MAX_CONTENT, Kind::Dword),
     (PIPE, Kind::Text),
     (RULES, Kind::Text),
+    (BLOCK_PIDS_FILE, Kind::Text),
 ];
 
 fn hklm() -> RegKey {
