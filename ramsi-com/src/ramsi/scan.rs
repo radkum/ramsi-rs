@@ -446,6 +446,15 @@ mod tests {
             .find(|c| c.name().eq_ignore_ascii_case("register-scheduledtask"))
             .unwrap();
         assert_eq!(command.args(), &["-taskname", "Updater"]);
+
+        let result = scanner.scan(
+            "Register-ScheduledTask -TaskName ('shem-' + 'exp-03') -Action $a",
+            ScriptType::PsCommand,
+        );
+        assert_eq!(
+            result.commands[0].args(),
+            &["-taskname", "shem-exp-03", "-action", "$a"]
+        );
     }
 
     #[test]

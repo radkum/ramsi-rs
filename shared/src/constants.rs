@@ -29,4 +29,5 @@ pub mod config_value {
     pub const MAX_CONTENT: &str = "max_content";
     pub const PIPE: &str = "pipe";
     pub const RULES: &str = "rules";
+    pub const BLOCK_PIDS_FILE: &str = "block_pids_file";
 }

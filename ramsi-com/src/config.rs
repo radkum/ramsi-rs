@@ -37,6 +37,8 @@ pub struct Config {
     pub max_content: usize,
     pub pipe_name: String,
     pub rules: Option<PathBuf>,
+    // block only the pids listed here (the agent tree); None blocks every process
+    pub block_pids_file: Option<PathBuf>,
 }
 
 impl Default for Config {
@@ -54,6 +56,7 @@ impl Default for Config {
             max_content: 64 * 1024,
             pipe_name: PipeName::from_suffix(RAMSI_PIPE_SUFFIX).to_string(),
             rules: None,
+            block_pids_file: None,
         }
     }
 }
@@ -70,8 +73,20 @@ impl Config {
         }
     }
 
-    pub fn blocks(&self, status: ScanStatus) -> bool {
-        self.mode == Mode::Block && reaches(status, self.block_on)
+    pub fn blocks(&self, status: ScanStatus, pid: u32) -> bool {
+        self.mode == Mode::Block && reaches(status, self.block_on) && self.in_block_scope(pid)
+    }
+
+    // with block_pids_file set, only those pids are blocked; a missing file blocks
+    // nothing
+    fn in_block_scope(&self, pid: u32) -> bool {
+        let Some(path) = &self.block_pids_file else {
+            return true;
+        };
+        std::fs::read_to_string(path).is_ok_and(|text| {
+            text.split_whitespace()
+                .any(|entry| entry.parse::<u32>() == Ok(pid))
+        })
     }
 
     pub fn reports(&self, status: ScanStatus) -> bool {
@@ -147,6 +162,9 @@ impl Config {
         }
         if let Ok(rules) = key.get_value::<String, _>(config_value::RULES) {
             config.rules = Some(rules.into());
+        }
+        if let Ok(file) = key.get_value::<String, _>(config_value::BLOCK_PIDS_FILE) {
+            config.block_pids_file = Some(file.into());
         }
         config
     }
@@ -230,6 +248,9 @@ mod tests {
         key.1
             .set_value(config_value::RULES, &"C:\\rules.toml")
             .unwrap();
+        key.1
+            .set_value(config_value::BLOCK_PIDS_FILE, &"C:\\pids.txt")
+            .unwrap();
 
         let config = Config::from_key(&key.1);
 
@@ -245,6 +266,7 @@ mod tests {
         assert_eq!(config.max_content, 10);
         assert_eq!(config.pipe_name, r"\\.\pipe\other");
         assert_eq!(config.rules, Some(PathBuf::from("C:\\rules.toml")));
+        assert_eq!(config.block_pids_file, Some(PathBuf::from("C:\\pids.txt")));
     }
 
     #[test]
@@ -335,8 +357,8 @@ mod tests {
             block_on: ScanStatus::Suspicious,
             ..Config::default()
         };
-        assert!(!config.blocks(ScanStatus::Detected));
-        assert!(!config.blocks(ScanStatus::Suspicious));
+        assert!(!config.blocks(ScanStatus::Detected, 0));
+        assert!(!config.blocks(ScanStatus::Suspicious, 0));
     }
 
     #[test]
@@ -345,17 +367,34 @@ mod tests {
             mode: Mode::Block,
             ..Config::default()
         };
-        assert!(detected.blocks(ScanStatus::Detected));
-        assert!(!detected.blocks(ScanStatus::Suspicious));
-        assert!(!detected.blocks(ScanStatus::NotDetected));
+        assert!(detected.blocks(ScanStatus::Detected, 0));
+        assert!(!detected.blocks(ScanStatus::Suspicious, 0));
+        assert!(!detected.blocks(ScanStatus::NotDetected, 0));
 
         let suspicious = Config {
             mode: Mode::Block,
             block_on: ScanStatus::Suspicious,
             ..Config::default()
         };
-        assert!(suspicious.blocks(ScanStatus::Detected));
-        assert!(suspicious.blocks(ScanStatus::Suspicious));
-        assert!(!suspicious.blocks(ScanStatus::Clean));
+        assert!(suspicious.blocks(ScanStatus::Detected, 0));
+        assert!(suspicious.blocks(ScanStatus::Suspicious, 0));
+        assert!(!suspicious.blocks(ScanStatus::Clean, 0));
+    }
+
+    #[test]
+    fn block_pids_file_scopes_blocking() {
+        let path =
+            std::env::temp_dir().join(format!("ramsi-block-pids-{}.txt", std::process::id()));
+        std::fs::write(&path, "1234\n5678\n").unwrap();
+        let config = Config {
+            mode: Mode::Block,
+            block_pids_file: Some(path.clone()),
+            ..Config::default()
+        };
+        assert!(config.blocks(ScanStatus::Detected, 1234));
+        assert!(!config.blocks(ScanStatus::Detected, 9999));
+        // a missing file blocks nothing rather than everything
+        std::fs::remove_file(&path).unwrap();
+        assert!(!config.blocks(ScanStatus::Detected, 1234));
     }
 }
