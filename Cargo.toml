@@ -2,6 +2,7 @@
 members = [ 
     "ramsi-cli",
     "ramsi-com",
+    "ramsi-consumer",
     "xtask",
 ]
 resolver = "3"

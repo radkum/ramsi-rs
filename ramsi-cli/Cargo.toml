@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 shared = { path = "../shared" }
+ramsi-consumer = { path = "../ramsi-consumer" }
 
 anyhow = { workspace = true }
 chrono = { workspace = true }

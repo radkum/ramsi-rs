@@ -1,16 +1,24 @@
+//! The consumer side of the Ramsi AMSI provider: hosts the trace pipe, verifies
+//! each event against the pipe client process as the kernel sees it, and hands
+//! the event to a callback.
+//!
+//! The provider DLL reports scans as JSON over a named pipe; only an elevated
+//! process can create that pipe (the provider checks its owner), so a caller
+//! hosts this from an elevated process.
+
 use std::{
     ffi::CString,
+    io,
     mem::zeroed,
     os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle},
+    sync::Arc,
     time::Duration,
 };
 
 use serde::de::DeserializeOwned;
 use serde_json::from_slice;
-use shared::{
-    ScanEvent,
-    constants::{MAX_MESSAGE_LEN, PIPE_SDDL},
-};
+use shared::constants::{MAX_MESSAGE_LEN, PIPE_SDDL};
+pub use shared::{Command, ScanEvent, ScanStatus};
 use thiserror::Error;
 use tokio::{
     io::AsyncReadExt,
@@ -39,7 +47,7 @@ use windows_core::{PCSTR, PWSTR};
 #[derive(Error, Debug)]
 pub enum PipeError {
     #[error("Io error: {0}")]
-    IoError(std::io::Error),
+    IoError(io::Error),
 
     #[error("Timeout")]
     Timeout,
@@ -48,11 +56,11 @@ pub enum PipeError {
     UnexpectedEof,
 }
 
-impl From<std::io::Error> for PipeError {
-    fn from(err: std::io::Error) -> Self {
-        if err.kind() == std::io::ErrorKind::TimedOut {
+impl From<io::Error> for PipeError {
+    fn from(err: io::Error) -> Self {
+        if err.kind() == io::ErrorKind::TimedOut {
             Self::Timeout
-        } else if err.kind() == std::io::ErrorKind::UnexpectedEof {
+        } else if err.kind() == io::ErrorKind::UnexpectedEof {
             Self::UnexpectedEof
         } else {
             Self::IoError(err)
@@ -60,9 +68,75 @@ impl From<std::io::Error> for PipeError {
     }
 }
 
-pub async fn message<M: DeserializeOwned>(
-    pipe: &mut NamedPipeServer,
-) -> core::result::Result<M, PipeError> {
+/// Runs the trace server on `pipe_name` until the process exits, calling
+/// `on_event` for every scan whose pid matches the pipe client. Blocking; call
+/// it from its own thread.
+pub fn run(
+    pipe_name: &str,
+    on_event: impl Fn(ScanEvent) + Send + Sync + 'static,
+) -> io::Result<()> {
+    let runtime = tokio::runtime::Runtime::new()?;
+    runtime.block_on(run_async(pipe_name, on_event, || false))
+}
+
+/// Like [`run`], but async and stopping when `should_stop` returns true.
+pub async fn run_async(
+    pipe_name: &str,
+    on_event: impl Fn(ScanEvent) + Send + Sync + 'static,
+    should_stop: impl Fn() -> bool + Send + Sync + 'static,
+) -> io::Result<()> {
+    let on_event = Arc::new(on_event);
+    let mut server = create_first_server(pipe_name)?;
+    log::info!("Tracing events on {pipe_name}");
+
+    loop {
+        if should_stop() {
+            break;
+        }
+        if timeout(Duration::from_millis(1000), server.connect())
+            .await
+            .is_err()
+        {
+            continue;
+        }
+        let mut connected_client = server;
+        // read now, a short-lived client may exit before the task runs
+        let identity = ClientIdentity::of(&connected_client);
+        // the next server is created before this one is moved to the task, so the pipe
+        // is never closed while a client waits on it
+        server = create_server(pipe_name)?;
+
+        let on_event = on_event.clone();
+        tokio::spawn(async move {
+            let identity = match identity {
+                Ok(identity) => identity,
+                Err(err) => {
+                    log::warn!("Dropping client of unknown pid: {err}");
+                    return;
+                },
+            };
+            loop {
+                match message::<ScanEvent>(&mut connected_client).await {
+                    Ok(mut event) => {
+                        if identity.apply(&mut event) {
+                            on_event(event);
+                        }
+                    },
+                    Err(PipeError::UnexpectedEof) => break,
+                    // the stream is stalled or out of sync, drop the client
+                    Err(err) => {
+                        log::warn!("Dropping client: {err}");
+                        break;
+                    },
+                }
+            }
+        });
+    }
+
+    Ok(())
+}
+
+pub async fn message<M: DeserializeOwned>(pipe: &mut NamedPipeServer) -> Result<M, PipeError> {
     Ok(read::<M, _>(pipe, BODY_TIMEOUT).await?)
 }
 
@@ -72,12 +146,12 @@ const BODY_TIMEOUT: Duration = Duration::from_secs(5);
 pub async fn read<M: DeserializeOwned, R: AsyncReadExt + std::marker::Unpin>(
     pipe: &mut R,
     body_timeout: Duration,
-) -> std::io::Result<M> {
+) -> io::Result<M> {
     // no timeout here: read_u64 is not cancel-safe and an idle client is fine
     let message_length = pipe.read_u64().await?;
     if message_length > MAX_MESSAGE_LEN {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
             format!("Message too long: {message_length} bytes"),
         ));
     }
@@ -86,23 +160,20 @@ pub async fn read<M: DeserializeOwned, R: AsyncReadExt + std::marker::Unpin>(
     let mut body = AsyncReadExt::take(&mut *pipe, message_length);
     timeout(body_timeout, body.read_to_end(&mut buffer)).await??;
     if buffer.len() as u64 != message_length {
-        return Err(std::io::ErrorKind::UnexpectedEof.into());
+        return Err(io::ErrorKind::UnexpectedEof.into());
     }
     Ok(from_slice::<M>(&buffer)?)
 }
 
-pub fn create_first_server(pipe_name: &str) -> std::io::Result<NamedPipeServer> {
+fn create_first_server(pipe_name: &str) -> io::Result<NamedPipeServer> {
     create_writer_with_security_attrs(pipe_name, true)
 }
 
-pub fn create_server(pipe_name: &str) -> std::io::Result<NamedPipeServer> {
+fn create_server(pipe_name: &str) -> io::Result<NamedPipeServer> {
     create_writer_with_security_attrs(pipe_name, false)
 }
 
-pub fn create_writer_with_security_attrs(
-    pipe_name: &str,
-    first: bool,
-) -> std::io::Result<NamedPipeServer> {
+fn create_writer_with_security_attrs(pipe_name: &str, first: bool) -> io::Result<NamedPipeServer> {
     use windows::Win32::Security::Authorization::{
         ConvertStringSecurityDescriptorToSecurityDescriptorA, SDDL_REVISION_1,
     };
@@ -139,7 +210,7 @@ pub struct ClientIdentity {
 }
 
 impl ClientIdentity {
-    pub fn of(pipe: &NamedPipeServer) -> std::io::Result<Self> {
+    pub fn of(pipe: &NamedPipeServer) -> io::Result<Self> {
         let pipe = HANDLE(pipe.as_raw_handle());
         let mut pid = 0;
         unsafe { GetNamedPipeClientProcessId(pipe, &mut pid)? };
@@ -245,7 +316,7 @@ mod tests {
 
     #[tokio::test]
     async fn first_server_fails_when_pipe_exists() {
-        let name = format!(r"\\.\pipe\ramsi-cli-test-{}", std::process::id());
+        let name = format!(r"\\.\pipe\ramsi-consumer-test-{}", std::process::id());
         let _server = create_first_server(&name).unwrap();
         let _next = create_server(&name).unwrap();
         assert!(create_first_server(&name).is_err());
@@ -255,9 +326,11 @@ mod tests {
     async fn identity_comes_from_the_client_process() {
         use tokio::net::windows::named_pipe::ClientOptions;
 
-        let name =
-            shared::PipeName::from_suffix(&format!("ramsi-cli-identity-{}", std::process::id()))
-                .to_string();
+        let name = shared::PipeName::from_suffix(&format!(
+            "ramsi-consumer-identity-{}",
+            std::process::id()
+        ))
+        .to_string();
         let server = create_first_server(&name).unwrap();
         let _client = ClientOptions::new().open(&name).unwrap();
         server.connect().await.unwrap();
@@ -312,7 +385,7 @@ mod tests {
         let err = read::<String, _>(&mut input, Duration::from_secs(1))
             .await
             .unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
 
     #[tokio::test]
@@ -337,7 +410,7 @@ mod tests {
         let err = read::<String, _>(&mut server, Duration::from_millis(100))
             .await
             .unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+        assert_eq!(err.kind(), io::ErrorKind::TimedOut);
     }
 
     #[tokio::test]

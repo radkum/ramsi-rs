@@ -1,21 +1,16 @@
 mod com_wrapper;
 mod config;
-mod pipe_server;
 
-use std::{
-    sync::{
-        LazyLock,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::Duration,
+use std::sync::{
+    LazyLock,
+    atomic::{AtomicBool, Ordering},
 };
 
 use clap::{Parser, Subcommand};
 use com_wrapper::{ComWrapper, RamsiComWrapper};
-use shared::{PipeName, ScanEvent};
-use tokio::{runtime::Runtime, time::timeout};
-
-use crate::pipe_server::PipeError;
+use ramsi_consumer::ScanEvent;
+use shared::PipeName;
+use tokio::runtime::Runtime;
 
 const RAMSI_COM_DLL: &str = "ramsi_com.dll";
 
@@ -191,61 +186,12 @@ async fn trace_amsi_events(
         .expect("Error setting Ctrl-C handler");
     });
 
-    let mut server = pipe_server::create_first_server(pipe_name)?;
-    log::info!("Tracing events on {pipe_name}");
-
-    loop {
-        {
-            let control_c = CONTROL_C.load(Ordering::Acquire);
-            if control_c {
-                break;
-            }
-        }
-
-        // Wait for a client to connect.
-        if let Err(_err) = timeout(Duration::from_millis(1000), server.connect()).await {
-            //timeout
-            continue;
-        }
-
-        let mut connected_client = server;
-        // read now, a short-lived client may exit before the task runs
-        let identity = pipe_server::ClientIdentity::of(&connected_client);
-
-        // Construct the next server to be connected before sending the one
-        // we already have of onto a task. This ensures that the server
-        // isn't closed (after it's done in the task) before a new one is
-        // available. Otherwise the client might error with
-        // `io::ErrorKind::NotFound`.
-        server = pipe_server::create_server(pipe_name)?;
-
-        let output = output.clone();
-        // ends with the runtime on Ctrl+C
-        let _client = tokio::spawn(async move {
-            let identity = match identity {
-                Ok(identity) => identity,
-                Err(err) => {
-                    log::warn!("Dropping client of unknown pid: {err}");
-                    return;
-                },
-            };
-            loop {
-                match pipe_server::message::<ScanEvent>(&mut connected_client).await {
-                    Ok(mut event) => {
-                        if identity.apply(&mut event) {
-                            output.print(&event);
-                        }
-                    },
-                    Err(PipeError::UnexpectedEof) => break,
-                    // the stream is stalled or out of sync, drop the client
-                    Err(err) => {
-                        log::warn!("Dropping client: {err}");
-                        break;
-                    },
-                }
-            }
-        });
-    }
+    ramsi_consumer::run_async(
+        pipe_name,
+        move |event| output.print(&event),
+        || CONTROL_C.load(Ordering::Acquire),
+    )
+    .await?;
 
     Ok(())
 }
