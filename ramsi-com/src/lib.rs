@@ -2,6 +2,7 @@
 
 mod amsi_utils;
 mod config;
+mod heartbeat;
 mod ramsi;
 mod winapi;
 

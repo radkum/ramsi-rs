@@ -46,6 +46,8 @@ const VALUES: &[(&str, Kind)] = &[
     (PIPE, Kind::Text),
     (RULES, Kind::Text),
     (BLOCK_PIDS_FILE, Kind::Text),
+    (HEARTBEAT_SECS, Kind::Dword),
+    (HEARTBEAT_PIDS_FILE, Kind::Text),
 ];
 
 fn hklm() -> RegKey {
