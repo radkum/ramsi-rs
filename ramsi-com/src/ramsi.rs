@@ -45,6 +45,8 @@ pub struct Ramsi {
     request_number: AtomicU32,
     pipe_client: Arc<RwLock<PipeClient>>,
     config: Config,
+    // the process nonce a heartbeat scan carries; Scan recognizes it
+    heartbeat_nonce: String,
 }
 
 impl Ramsi {
@@ -65,12 +67,20 @@ impl Ramsi {
             config.dump = false;
         }
 
+        let heartbeat_nonce = format!(
+            "{}-{}",
+            process_info.pid(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        );
+        crate::heartbeat::spawn(config.clone(), heartbeat_nonce.clone());
+
         Self {
             scanner: Scanner::new(Self::load_rules(&config)),
             process_info,
             request_number: AtomicU32::new(0),
             pipe_client: Arc::new(RwLock::new(PipeClient::new(&config.pipe_name))),
             config,
+            heartbeat_nonce,
         }
     }
 

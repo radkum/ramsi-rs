@@ -47,6 +47,9 @@ pub struct ScanEvent {
     // the parser failed, so commands is empty whatever the script calls
     #[serde(default)]
     pub parse_failed: bool,
+    // the provider scanned its own nonce: AMSI reached the provider, so AMSI is not patched
+    #[serde(default)]
+    pub heartbeat: bool,
     // set by the trace server from the pipe client process, never by the provider
     pub process_created: Option<String>,
     pub user_sid: Option<String>,
@@ -135,6 +138,7 @@ mod tests {
             commands: Vec::new(),
             commands_truncated: false,
             parse_failed: false,
+            heartbeat: false,
             process_created: None,
             user_sid: None,
             parent_pid: None,

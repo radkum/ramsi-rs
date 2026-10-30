@@ -30,4 +30,6 @@ pub mod config_value {
     pub const PIPE: &str = "pipe";
     pub const RULES: &str = "rules";
     pub const BLOCK_PIDS_FILE: &str = "block_pids_file";
+    pub const HEARTBEAT_SECS: &str = "heartbeat_secs";
+    pub const HEARTBEAT_PIDS_FILE: &str = "heartbeat_pids_file";
 }

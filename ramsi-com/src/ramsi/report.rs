@@ -10,7 +10,7 @@ use shared::{Command, SCHEMA_VERSION, ScanEvent};
 use tokio::runtime::{Builder, Runtime};
 use windows::Win32::System::{Antimalware::*, Threading::GetCurrentThreadId};
 
-use super::{Ramsi_Impl, ScanResult};
+use super::{Ramsi_Impl, ScanResult, ScanStatus};
 use crate::{config::command_name, utils::dump};
 // one pipe needs no worker thread per core in every reporting process
 static RUNTIME: LazyLock<Option<Runtime>> =
@@ -57,6 +57,7 @@ impl Ramsi_Impl {
             }),
             commands_truncated: false,
             parse_failed: result.parse_failed,
+            heartbeat: false,
             process_created: None,
             user_sid: None,
             parent_pid: None,
@@ -73,6 +74,40 @@ impl Ramsi_Impl {
         }
         amsi_event.truncate_content(self.config.max_content);
 
+        self.send(amsi_event);
+    }
+
+    // the process scanned its own nonce: AMSI reached the provider
+    pub fn report_heartbeat(&self, content_name: String) {
+        let process_info = &self.process_info;
+        self.send(ScanEvent {
+            version: SCHEMA_VERSION,
+            time: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            pid: process_info.pid(),
+            tid: unsafe { GetCurrentThreadId() },
+            process: process_info.file_name().to_string(),
+            cmd_line: process_info.cmd_line().to_string(),
+            app_name: "ramsi-heartbeat".to_string(),
+            content_name,
+            session: 0,
+            request_number: self.request_number.fetch_add(1, Ordering::AcqRel) + 1,
+            status: ScanStatus::Clean,
+            reason: None,
+            blocked: false,
+            content: String::new(),
+            content_truncated: false,
+            commands: Vec::new(),
+            commands_truncated: false,
+            parse_failed: false,
+            heartbeat: true,
+            process_created: None,
+            user_sid: None,
+            parent_pid: None,
+            session_id: None,
+        });
+    }
+
+    fn send(&self, amsi_event: ScanEvent) {
         if let Some(runtime) = &*RUNTIME {
             runtime.block_on(async {
                 if !self.pipe_client.read().await.active() {

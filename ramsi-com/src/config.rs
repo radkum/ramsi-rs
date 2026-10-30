@@ -12,13 +12,13 @@ use winreg::{
 
 use crate::ScanStatus;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Mode {
     Monitor,
     Block,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Config {
     pub mode: Mode,
     // the lowest status that is blocked in block mode
@@ -39,6 +39,10 @@ pub struct Config {
     pub rules: Option<PathBuf>,
     // block only the pids listed here (the agent tree); None blocks every process
     pub block_pids_file: Option<PathBuf>,
+    // how often a process in heartbeat_pids_file scans its own nonce; 0 disables it
+    pub heartbeat_secs: u64,
+    // only pids listed here heartbeat; None heartbeats from every process
+    pub heartbeat_pids_file: Option<PathBuf>,
 }
 
 impl Default for Config {
@@ -57,6 +61,8 @@ impl Default for Config {
             pipe_name: PipeName::from_suffix(RAMSI_PIPE_SUFFIX).to_string(),
             rules: None,
             block_pids_file: None,
+            heartbeat_secs: 0,
+            heartbeat_pids_file: None,
         }
     }
 }
@@ -82,6 +88,17 @@ impl Config {
     fn in_block_scope(&self, pid: u32) -> bool {
         let Some(path) = &self.block_pids_file else {
             return true;
+        };
+        std::fs::read_to_string(path).is_ok_and(|text| {
+            text.split_whitespace()
+                .any(|entry| entry.parse::<u32>() == Ok(pid))
+        })
+    }
+
+    // only a pid in heartbeat_pids_file heartbeats; no file heartbeats nothing
+    pub fn heartbeats(&self, pid: u32) -> bool {
+        let Some(path) = &self.heartbeat_pids_file else {
+            return false;
         };
         std::fs::read_to_string(path).is_ok_and(|text| {
             text.split_whitespace()
@@ -165,6 +182,12 @@ impl Config {
         }
         if let Ok(file) = key.get_value::<String, _>(config_value::BLOCK_PIDS_FILE) {
             config.block_pids_file = Some(file.into());
+        }
+        if let Ok(secs) = key.get_value::<u32, _>(config_value::HEARTBEAT_SECS) {
+            config.heartbeat_secs = u64::from(secs);
+        }
+        if let Ok(file) = key.get_value::<String, _>(config_value::HEARTBEAT_PIDS_FILE) {
+            config.heartbeat_pids_file = Some(file.into());
         }
         config
     }
@@ -251,6 +274,12 @@ mod tests {
         key.1
             .set_value(config_value::BLOCK_PIDS_FILE, &"C:\\pids.txt")
             .unwrap();
+        key.1
+            .set_value(config_value::HEARTBEAT_SECS, &30u32)
+            .unwrap();
+        key.1
+            .set_value(config_value::HEARTBEAT_PIDS_FILE, &"C:\\hb.txt")
+            .unwrap();
 
         let config = Config::from_key(&key.1);
 
@@ -267,6 +296,11 @@ mod tests {
         assert_eq!(config.pipe_name, r"\\.\pipe\other");
         assert_eq!(config.rules, Some(PathBuf::from("C:\\rules.toml")));
         assert_eq!(config.block_pids_file, Some(PathBuf::from("C:\\pids.txt")));
+        assert_eq!(config.heartbeat_secs, 30);
+        assert_eq!(
+            config.heartbeat_pids_file,
+            Some(PathBuf::from("C:\\hb.txt"))
+        );
     }
 
     #[test]
@@ -349,6 +383,23 @@ mod tests {
             ..config
         };
         assert!(!off.reports_command("Register-ScheduledTask"));
+    }
+
+    #[test]
+    fn heartbeat_pids_file_scopes_heartbeats() {
+        // no file heartbeats nothing
+        assert!(!Config::default().heartbeats(1));
+
+        let path = std::env::temp_dir().join(format!("ramsi-hb-{}.txt", std::process::id()));
+        std::fs::write(&path, "1234\n5678\n").unwrap();
+        let config = Config {
+            heartbeat_pids_file: Some(path.clone()),
+            ..Config::default()
+        };
+        assert!(config.heartbeats(1234));
+        assert!(!config.heartbeats(9999));
+        std::fs::remove_file(&path).unwrap();
+        assert!(!config.heartbeats(1234));
     }
 
     #[test]
